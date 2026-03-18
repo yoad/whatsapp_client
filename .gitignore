@@ -1,0 +1,9 @@
+node_modules/
+*.log
+.env
+.DS_Store
+
+# Runtime data files (keep package.json tracked)
+events.json
+session_data/
+auth_info/

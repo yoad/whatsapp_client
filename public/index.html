@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Client</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0b141a;
+            color: #e9edef;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .container {
+            text-align: center;
+            padding: 2rem;
+            max-width: 480px;
+            width: 100%;
+        }
+
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        h1 {
+            font-size: 1.4rem;
+            font-weight: 500;
+            margin-bottom: 2rem;
+            color: #8696a0;
+        }
+
+        .status-card {
+            background: #1f2c34;
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .status-badge .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .status-connected { background: rgba(37, 211, 102, 0.15); color: #25d366; }
+        .status-connected .dot { background: #25d366; }
+
+        .status-disconnected { background: rgba(234, 67, 53, 0.15); color: #ea4335; }
+        .status-disconnected .dot { background: #ea4335; }
+
+        .status-qr { background: rgba(251, 188, 4, 0.15); color: #fbbc04; }
+        .status-qr .dot { background: #fbbc04; }
+
+        .status-initializing { background: rgba(134, 150, 160, 0.15); color: #8696a0; }
+        .status-initializing .dot { background: #8696a0; }
+
+        .qr-container {
+            margin: 1.5rem 0;
+            padding: 1rem;
+            background: #fff;
+            border-radius: 12px;
+            display: inline-block;
+        }
+
+        .qr-container img {
+            display: block;
+            width: 280px;
+            height: 280px;
+        }
+
+        .qr-instruction {
+            color: #8696a0;
+            font-size: 0.85rem;
+            margin-top: 1rem;
+            line-height: 1.5;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(134, 150, 160, 0.1);
+            font-size: 0.85rem;
+        }
+
+        .info-row:last-child { border-bottom: none; }
+
+        .info-label { color: #8696a0; }
+        .info-value { color: #e9edef; font-weight: 500; }
+
+        .refreshing {
+            color: #8696a0;
+            font-size: 0.75rem;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">📱</div>
+        <h1>WhatsApp Client</h1>
+
+        <div class="status-card">
+            <div id="statusBadge" class="status-badge status-initializing">
+                <span class="dot"></span>
+                <span id="statusText">Initializing...</span>
+            </div>
+
+            <div id="qrSection" style="display: none;">
+                <div class="qr-container">
+                    <img id="qrImage" alt="QR Code" />
+                </div>
+                <div class="qr-instruction">
+                    Open WhatsApp on your phone → Settings → Linked Devices → Link a Device → Scan this QR code
+                </div>
+            </div>
+        </div>
+
+        <div class="status-card">
+            <div class="info-row">
+                <span class="info-label">Status</span>
+                <span class="info-value" id="infoStatus">—</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Last Heartbeat</span>
+                <span class="info-value" id="infoHeartbeat">—</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Heartbeat #</span>
+                <span class="info-value" id="infoCount">—</span>
+            </div>
+        </div>
+
+        <div class="refreshing">Auto-refreshing every 5 seconds</div>
+    </div>
+
+    <script>
+        const STATUS_MAP = {
+            connected:    { cls: 'status-connected',    text: 'Connected' },
+            disconnected: { cls: 'status-disconnected', text: 'Disconnected' },
+            qr_required:  { cls: 'status-qr',          text: 'QR Code Required' },
+            initializing: { cls: 'status-initializing', text: 'Initializing...' }
+        };
+
+        async function refresh() {
+            try {
+                const res = await fetch('./api/status');
+                const data = await res.json();
+                const info = STATUS_MAP[data.status] || STATUS_MAP.initializing;
+
+                // Update badge
+                const badge = document.getElementById('statusBadge');
+                badge.className = 'status-badge ' + info.cls;
+                document.getElementById('statusText').textContent = info.text;
+
+                // QR section
+                const qrSection = document.getElementById('qrSection');
+                if (data.status === 'qr_required' && data.qr_data_url) {
+                    document.getElementById('qrImage').src = data.qr_data_url;
+                    qrSection.style.display = 'block';
+                } else {
+                    qrSection.style.display = 'none';
+                }
+
+                // Info rows
+                document.getElementById('infoStatus').textContent = data.status;
+                document.getElementById('infoHeartbeat').textContent = data.last_heartbeat
+                    ? new Date(data.last_heartbeat).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })
+                    : '—';
+                document.getElementById('infoCount').textContent = data.heartbeat_count || '—';
+            } catch (e) {
+                console.error('Refresh failed:', e);
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>

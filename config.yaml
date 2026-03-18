@@ -1,0 +1,20 @@
+# /addons/whatsapp_client/config.yaml
+name: "WhatsApp Client"
+version: "0.0.1"
+slug: "whatsapp_client"
+description: "Stateless WhatsApp client that exposes messaging via HA events."
+arch:
+  - armv7
+  - aarch64
+  - amd64
+init: false
+homeassistant_api: true
+ingress: true
+ingress_port: 3001
+panel_icon: "mdi:whatsapp"
+panel_title: "WhatsApp"
+host_network: true
+options:
+  TEST_MESSAGE: true
+schema:
+  TEST_MESSAGE: bool
