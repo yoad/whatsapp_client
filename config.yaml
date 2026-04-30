@@ -16,5 +16,7 @@ panel_title: "WhatsApp"
 host_network: true
 options:
   TEST_MESSAGE: true
+  PHONE_NUMBER: ""
 schema:
   TEST_MESSAGE: bool
+  PHONE_NUMBER: "str?"

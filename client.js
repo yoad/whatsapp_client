@@ -33,7 +33,35 @@ try {
   console.log('No options.json found, using defaults.');
 }
 
-const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : trueno;
+const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
+const PHONE_NUMBER_FILE = '/data/phone_number.txt';
+
+// Load phone number: config option takes priority, then saved file
+function loadSavedPhoneNumber() {
+  try {
+    return fs.readFileSync(PHONE_NUMBER_FILE, 'utf8').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+function savePhoneNumber(number) {
+  try {
+    fs.writeFileSync(PHONE_NUMBER_FILE, number, 'utf8');
+    console.log(`[PAIR] Phone number saved for future restarts.`);
+  } catch (err) {
+    console.error(`[PAIR] Failed to save phone number: ${err.message}`);
+  }
+}
+
+let phoneNumber = options.PHONE_NUMBER || loadSavedPhoneNumber();
+
+if (phoneNumber) {
+  console.log(`Phone number pairing enabled for: ${phoneNumber}`);
+  savePhoneNumber(phoneNumber); // persist config value too
+} else {
+  console.log('No phone number configured — will use QR code authentication.');
+}
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA event integration will not work.');
@@ -42,9 +70,11 @@ if (!SUPERVISOR_TOKEN) {
 // ────────────────────────────────────────────────────────────
 // STATE (in-memory only, no persistence)
 // ────────────────────────────────────────────────────────────
-let connectionStatus = 'initializing'; // initializing | qr_required | connected | disconnected
+let connectionStatus = 'initializing'; // initializing | qr_required | pairing_code | connected | disconnected
 let currentQR = null;                  // raw QR string (for terminal + ingress page)
 let currentQRDataUrl = null;           // QR as data URL (for ingress page)
+let currentPairingCode = null;         // 8-char pairing code (for phone number auth)
+let authMethod = phoneNumber ? 'pairing_code' : 'qr'; // which auth method is in use
 let lastHeartbeat = null;
 let readyHandled = false;
 let clientReady = false;
@@ -96,7 +126,7 @@ async function fireHAEvent(eventType, eventData) {
 // ────────────────────────────────────────────────────────────
 // WHATSAPP CLIENT
 // ────────────────────────────────────────────────────────────
-const client = new Client({
+const clientOptions = {
   authStrategy: new LocalAuth({ dataPath: '/data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
@@ -116,6 +146,42 @@ const client = new Client({
     ],
     protocolTimeout: 300000,
   }
+};
+
+// Enable pairing code auth if phone number is configured
+if (phoneNumber) {
+  clientOptions.pairWithPhoneNumber = {
+    phoneNumber: phoneNumber,
+    showNotification: true,
+    intervalMs: 180000  // refresh code every 3 minutes
+  };
+}
+
+const client = new Client(clientOptions);
+
+// --- Pairing Code (phone number auth) ---
+client.on('code', (code) => {
+  if (readyHandled) {
+    console.log('Pairing code received after already ready — ignoring.');
+    return;
+  }
+  const formatted = code.substring(0, 4) + '-' + code.substring(4);
+  console.log('╔══════════════════════════════════════════╗');
+  console.log(`║   PAIRING CODE:  ${formatted}                ║`);
+  console.log('╚══════════════════════════════════════════╝');
+  console.log('Enter this code in WhatsApp on your phone:');
+  console.log('Settings → Linked Devices → Link a Device → Link with phone number instead');
+
+  currentPairingCode = formatted;
+  connectionStatus = 'pairing_code';
+  currentQR = null;
+  currentQRDataUrl = null;
+
+  fireHAEvent('whatsapp_status', {
+    status: 'pairing_code',
+    pairing_code: formatted,
+    timestamp: Date.now()
+  });
 });
 
 // --- QR Code ---
@@ -130,6 +196,7 @@ client.on('qr', async (qr) => {
 
   currentQR = qr;
   connectionStatus = 'qr_required';
+  currentPairingCode = null;
 
   // Generate QR data URL for ingress page
   try {
@@ -160,6 +227,7 @@ client.on('ready', async () => {
   connectionStatus = 'connected';
   currentQR = null;
   currentQRDataUrl = null;
+  currentPairingCode = null;
 
   console.log('WhatsApp sync complete — now forwarding messages.');
 
@@ -531,6 +599,7 @@ setInterval(() => {
 // INGRESS WEB UI — simple status page
 // ────────────────────────────────────────────────────────────
 const app = express();
+app.use(express.json());
 
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
@@ -540,11 +609,51 @@ app.get('/api/status', (req, res) => {
   res.json({
     status: connectionStatus,
     client_ready: clientReady,
+    auth_method: authMethod,
     qr_data_url: currentQRDataUrl,
+    pairing_code: currentPairingCode,
     last_heartbeat: lastHeartbeat,
     heartbeat_count: heartbeatCount,
     timestamp: Date.now()
   });
+});
+
+// Pair with phone number — triggered from the UI
+app.post('/api/pair', async (req, res) => {
+  const { phone_number } = req.body || {};
+  if (!phone_number) {
+    return res.status(400).json({ error: 'phone_number is required' });
+  }
+
+  // Strip any non-digit characters
+  const cleaned = phone_number.replace(/\D/g, '');
+  if (cleaned.length < 10 || cleaned.length > 15) {
+    return res.status(400).json({ error: 'Invalid phone number format. Use international format without + (e.g. 972525628289)' });
+  }
+
+  if (clientReady) {
+    return res.status(400).json({ error: 'Already connected — no pairing needed' });
+  }
+
+  try {
+    console.log(`[PAIR] Requesting pairing code for ${cleaned} from UI...`);
+    authMethod = 'pairing_code';
+    phoneNumber = cleaned;
+    savePhoneNumber(cleaned); // persist for future restarts
+    const code = await client.requestPairingCode(cleaned, true);
+    const formatted = code.substring(0, 4) + '-' + code.substring(4);
+
+    currentPairingCode = formatted;
+    connectionStatus = 'pairing_code';
+    currentQR = null;
+    currentQRDataUrl = null;
+
+    console.log(`[PAIR] Pairing code generated: ${formatted}`);
+    res.json({ success: true, pairing_code: formatted });
+  } catch (err) {
+    console.error(`[PAIR] Failed to request pairing code: ${err.message}`);
+    res.status(500).json({ error: `Failed to generate pairing code: ${err.message}` });
+  }
 });
 
 app.listen(INGRESS_PORT, () => {
