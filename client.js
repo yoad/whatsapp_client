@@ -155,12 +155,40 @@ if (phoneNumber) {
     showNotification: true,
     intervalMs: 180000  // refresh code every 3 minutes
   };
+  console.log(`[Config] pairWithPhoneNumber set for: ${phoneNumber}`);
+} else {
+  console.log('[Config] No phone number — will use QR code flow');
 }
 
+console.log('[Config] Client options:', JSON.stringify({
+  authStrategy: 'LocalAuth(/data)',
+  pairWithPhoneNumber: clientOptions.pairWithPhoneNumber ? phoneNumber : 'none',
+  puppeteer: 'chromium + ' + clientOptions.puppeteer.args.length + ' args'
+}));
+
 const client = new Client(clientOptions);
+console.log('[Init] WhatsApp client instance created');
+
+// --- All client events for logging ---
+client.on('authenticated', () => {
+  console.log('[Auth] ✅ Authenticated successfully — session is valid');
+});
+
+client.on('auth_failure', (msg) => {
+  console.error('[Auth] ❌ Authentication failure:', msg);
+});
+
+client.on('loading_screen', (percent, message) => {
+  console.log(`[Loading] ${percent}% — ${message}`);
+});
+
+client.on('change_state', (state) => {
+  console.log(`[State] WhatsApp state changed to: ${state}`);
+});
 
 // --- Pairing Code (phone number auth) ---
 client.on('code', (code) => {
+  console.log(`[Pairing] 📱 Pairing code received (raw): ${code}`);
   if (readyHandled) {
     console.log('Pairing code received after already ready — ignoring.');
     return;
@@ -658,11 +686,13 @@ async function startClient(maxRetries = 5) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`[Startup] Initializing WhatsApp client (attempt ${attempt}/${maxRetries})...`);
+      console.log('[Startup] Launching Chromium browser...');
       await client.initialize();
-      console.log('[Startup] WhatsApp client initialized successfully');
+      console.log('[Startup] ✅ WhatsApp client initialized successfully');
       return;
     } catch (err) {
-      console.error(`[Startup] Attempt ${attempt} failed: ${err.message}`);
+      console.error(`[Startup] ❌ Attempt ${attempt} failed: ${err.message}`);
+      console.error(`[Startup] Stack: ${err.stack}`);
       if (attempt === maxRetries) throw err;
       console.log(`[Startup] Retrying in 30 seconds...`);
       await delay(30000);
@@ -678,6 +708,10 @@ async function main() {
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 
+  console.log('[Main] Auth method:', authMethod);
+  console.log('[Main] Phone number:', phoneNumber || '(none)');
+  console.log('');
+
   // Connect to HA WebSocket for command events
   connectHAWebSocket();
 
@@ -685,10 +719,11 @@ async function main() {
   while (true) {
     try {
       await startClient();
+      console.log('[Main] ✅ Client started successfully');
       return; // connected successfully
     } catch (err) {
-      console.error('Startup failed:', err.message);
-      console.log('Retrying in 60 seconds...');
+      console.error('[Main] ❌ Startup failed:', err.message);
+      console.log('[Main] Retrying in 60 seconds...');
       await delay(60000);
     }
   }
