@@ -634,10 +634,19 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // Status API endpoint
 app.get('/api/status', (req, res) => {
+  // Get connected phone number from client info
+  let connectedNumber = null;
+  try {
+    if (clientReady && client.info && client.info.wid) {
+      connectedNumber = client.info.wid.user || client.info.wid._serialized;
+    }
+  } catch (_) {}
+
   res.json({
     status: connectionStatus,
     client_ready: clientReady,
     auth_method: authMethod,
+    connected_number: connectedNumber,
     qr_data_url: currentQRDataUrl,
     pairing_code: currentPairingCode,
     last_heartbeat: lastHeartbeat,

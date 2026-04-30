@@ -82,6 +82,15 @@
         .status-initializing { background: rgba(134, 150, 160, 0.15); color: #8696a0; }
         .status-initializing .dot { background: #8696a0; }
 
+        .connected-number {
+            font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
+            font-size: 1.6rem;
+            font-weight: 600;
+            color: #25d366;
+            margin: 1rem 0 0.5rem;
+            letter-spacing: 2px;
+        }
+
         /* Phone number input */
         .phone-form {
             margin: 1.5rem 0 0.5rem;
@@ -265,6 +274,11 @@
                 <span id="statusText">Initializing...</span>
             </div>
 
+            <!-- Connected Phone Number -->
+            <div id="connectedSection" style="display: none;">
+                <div class="connected-number" id="connectedNumber"></div>
+            </div>
+
             <!-- Pairing Code Display -->
             <div id="pairingSection" style="display: none;">
                 <div class="pairing-code-container">
@@ -299,6 +313,10 @@
             <div class="info-row">
                 <span class="info-label">Status</span>
                 <span class="info-value" id="infoStatus">—</span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">Phone Number</span>
+                <span class="info-value" id="infoPhone">—</span>
             </div>
             <div class="info-row">
                 <span class="info-label">Auth Method</span>
@@ -386,12 +404,20 @@
 
                 const pairingSection = document.getElementById('pairingSection');
                 const phoneSection = document.getElementById('phoneSection');
+                const connectedSection = document.getElementById('connectedSection');
 
                 // Reset visibility
                 pairingSection.style.display = 'none';
                 phoneSection.style.display = 'none';
+                connectedSection.style.display = 'none';
 
-                if (data.status === 'pairing_code' && data.pairing_code) {
+                if (data.status === 'connected' && data.connected_number) {
+                    // Show connected phone number
+                    const num = data.connected_number;
+                    const formatted = '+' + num.replace(/@.*/, '');
+                    document.getElementById('connectedNumber').textContent = formatted;
+                    connectedSection.style.display = 'block';
+                } else if (data.status === 'pairing_code' && data.pairing_code) {
                     // Show pairing code
                     document.getElementById('pairingCode').textContent = data.pairing_code;
                     pairingSection.style.display = 'block';
@@ -402,6 +428,9 @@
 
                 // Info rows
                 document.getElementById('infoStatus').textContent = data.status;
+                document.getElementById('infoPhone').textContent = data.connected_number
+                    ? '+' + data.connected_number.replace(/@.*/, '')
+                    : '—';
                 document.getElementById('infoAuthMethod').textContent =
                     data.auth_method === 'pairing_code' ? 'Phone Number' : 'QR Code';
                 document.getElementById('infoHeartbeat').textContent = data.last_heartbeat
