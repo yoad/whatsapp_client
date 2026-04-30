@@ -635,25 +635,16 @@ app.post('/api/pair', async (req, res) => {
     return res.status(400).json({ error: 'Already connected — no pairing needed' });
   }
 
-  try {
-    console.log(`[PAIR] Requesting pairing code for ${cleaned} from UI...`);
-    authMethod = 'pairing_code';
-    phoneNumber = cleaned;
-    savePhoneNumber(cleaned); // persist for future restarts
-    const code = await client.requestPairingCode(cleaned, true);
-    const formatted = code.substring(0, 4) + '-' + code.substring(4);
+  // Save phone number and restart — the client will initialize with pairing code auth
+  console.log(`[PAIR] Phone number ${cleaned} received from UI — saving and restarting...`);
+  savePhoneNumber(cleaned);
+  res.json({ success: true, restarting: true, message: 'Phone number saved. Restarting to generate pairing code...' });
 
-    currentPairingCode = formatted;
-    connectionStatus = 'pairing_code';
-    currentQR = null;
-    currentQRDataUrl = null;
-
-    console.log(`[PAIR] Pairing code generated: ${formatted}`);
-    res.json({ success: true, pairing_code: formatted });
-  } catch (err) {
-    console.error(`[PAIR] Failed to request pairing code: ${err.message}`);
-    res.status(500).json({ error: `Failed to generate pairing code: ${err.message}` });
-  }
+  // Give the response time to send, then exit — Docker will restart us
+  setTimeout(() => {
+    console.log('[PAIR] Restarting process to apply phone number pairing...');
+    process.exit(0);
+  }, 1000);
 });
 
 app.listen(INGRESS_PORT, () => {

@@ -352,14 +352,17 @@
 
                 if (!res.ok) {
                     errorEl.textContent = data.error || 'Failed to request pairing code';
+                    btn.disabled = false;
+                    btn.textContent = 'Get Code';
                 } else {
-                    // Code will appear via the next status refresh
+                    // Server is restarting — show message and wait
+                    btn.textContent = 'Restarting...';
+                    document.getElementById('statusText').textContent = 'Restarting...';
                     errorEl.textContent = '';
-                    await refresh();
+                    // Keep polling — refresh will pick up the pairing code once server is back
                 }
             } catch (e) {
                 errorEl.textContent = 'Network error — is the client running?';
-            } finally {
                 btn.disabled = false;
                 btn.textContent = 'Get Code';
             }
