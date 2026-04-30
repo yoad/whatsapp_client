@@ -414,7 +414,7 @@
                 if (data.status === 'connected' && data.connected_number) {
                     // Show connected phone number
                     const num = data.connected_number;
-                    const formatted = '+' + num.replace(/@.*/, '');
+                    const formatted = num.replace(/@.*/, '');
                     document.getElementById('connectedNumber').textContent = formatted;
                     connectedSection.style.display = 'block';
                 } else if (data.status === 'pairing_code' && data.pairing_code) {
@@ -429,7 +429,7 @@
                 // Info rows
                 document.getElementById('infoStatus').textContent = data.status;
                 document.getElementById('infoPhone').textContent = data.connected_number
-                    ? '+' + data.connected_number.replace(/@.*/, '')
+                    ? data.connected_number.replace(/@.*/, '')
                     : '—';
                 document.getElementById('infoAuthMethod').textContent =
                     data.auth_method === 'pairing_code' ? 'Phone Number' : 'QR Code';
