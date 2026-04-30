@@ -261,6 +261,55 @@
             font-size: 0.75rem;
             margin-top: 1rem;
         }
+
+        /* Recent messages */
+        .messages-title {
+            color: #8696a0;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 0.8rem;
+        }
+
+        .msg-item {
+            text-align: left;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(134, 150, 160, 0.1);
+        }
+
+        .msg-item:last-child { border-bottom: none; }
+
+        .msg-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+        }
+
+        .msg-sender {
+            color: #00a884;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+
+        .msg-time {
+            color: #5a6b75;
+            font-size: 0.75rem;
+        }
+
+        .msg-body {
+            color: #8696a0;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .msg-empty {
+            color: #5a6b75;
+            font-size: 0.8rem;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -332,10 +381,21 @@
             </div>
         </div>
 
+        <div class="status-card" id="messagesCard" style="display: none;">
+            <div class="messages-title">Recent Messages</div>
+            <div id="messagesList"></div>
+        </div>
+
         <div class="refreshing">Auto-refreshing every 5 seconds</div>
     </div>
 
     <script>
+        function escapeHtml(str) {
+            const d = document.createElement('div');
+            d.textContent = str || '';
+            return d.innerHTML;
+        }
+
         const STATUS_MAP = {
             connected:    { cls: 'status-connected',    text: 'Connected' },
             disconnected: { cls: 'status-disconnected', text: 'Disconnected' },
@@ -437,6 +497,25 @@
                     ? new Date(data.last_heartbeat).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })
                     : '—';
                 document.getElementById('infoCount').textContent = data.heartbeat_count || '—';
+
+                // Recent messages
+                const messagesCard = document.getElementById('messagesCard');
+                const messagesList = document.getElementById('messagesList');
+                if (data.recent_messages && data.recent_messages.length > 0) {
+                    messagesCard.style.display = 'block';
+                    messagesList.innerHTML = data.recent_messages.map(m =>
+                        `<div class="msg-item">
+                            <div class="msg-header">
+                                <span class="msg-sender">${escapeHtml(m.sender)}</span>
+                                <span class="msg-time">${m.time}</span>
+                            </div>
+                            <div class="msg-body">${escapeHtml(m.body)}</div>
+                        </div>`
+                    ).join('');
+                } else {
+                    messagesCard.style.display = 'block';
+                    messagesList.innerHTML = '<div class="msg-empty">No messages yet</div>';
+                }
             } catch (e) {
                 console.error('Refresh failed:', e);
             }

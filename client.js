@@ -78,6 +78,16 @@ let authMethod = phoneNumber ? 'pairing_code' : 'qr'; // which auth method is in
 let lastHeartbeat = null;
 let readyHandled = false;
 let clientReady = false;
+let recentMessages = [];  // last 3 messages for UI
+
+function pushRecentMessage(sender, body, timestamp) {
+  recentMessages.push({
+    sender: sender,
+    body: (body || '').substring(0, 50),
+    time: new Date((timestamp || 0) * 1000).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', hour: '2-digit', minute: '2-digit' })
+  });
+  if (recentMessages.length > 3) recentMessages.shift();
+}
 
 // ────────────────────────────────────────────────────────────
 // HELPERS
@@ -319,6 +329,8 @@ client.on('message', async (msg) => {
 
     console.log(`[MSG] ${isGroup ? 'Group' : 'DM'} ${msg.from}: ${(msg.body || '').substring(0, 80)}...`);
 
+    pushRecentMessage(sender, msg.body, msg.timestamp);
+
     fireHAEvent('whatsapp_message', {
       group_id: msg.from,
       sender: sender,
@@ -343,6 +355,8 @@ client.on('message_create', async (msg) => {
     const messageId = msg.id && msg.id._serialized ? msg.id._serialized : `${msg.timestamp}-self`;
 
     console.log(`[MSG_CREATE] Self-sent to ${groupId}: ${(msg.body || '').substring(0, 80)}...`);
+
+    pushRecentMessage('Me', msg.body, msg.timestamp);
 
     fireHAEvent('whatsapp_message_create', {
       group_id: groupId,
@@ -650,6 +664,7 @@ app.get('/api/status', (req, res) => {
     connected_number: connectedNumber,
     qr_data_url: currentQRDataUrl,
     pairing_code: currentPairingCode,
+    recent_messages: recentMessages,
     last_heartbeat: lastHeartbeat,
     heartbeat_count: heartbeatCount,
     timestamp: Date.now()
