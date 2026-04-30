@@ -267,9 +267,10 @@ client.on('ready', async () => {
   // Send test message if configured
   if (TEST_MESSAGE) {
     try {
-      const testNumber = '972525628289@c.us';
-      await client.sendMessage(testNumber, '✅ WhatsApp Client addon connected successfully!');
-      console.log('[TEST] ✅ Test message sent to 972525628289');
+      const myNumber = client.info.wid.user;
+      const testId = myNumber + '@c.us';
+      await client.sendMessage(testId, '✅ WhatsApp Client addon connected successfully!');
+      console.log(`[TEST] ✅ Test message sent to ${myNumber}`);
     } catch (err) {
       console.error('[TEST] ❌ Test message failed:', err.message);
     }
