@@ -493,8 +493,12 @@
                     document.getElementById('pairingCode').textContent = data.pairing_code;
                     document.getElementById('pairingPhoneNumber').textContent = data.pairing_phone_number || '—';
                     pairingSection.style.display = 'block';
-                } else if (data.status !== 'connected') {
-                    // Not connected — show phone input
+                } else if (data.status === 'authenticated') {
+                    // Show syncing status with number
+                    const num = data.pairing_phone_number || '';
+                    document.getElementById('statusText').textContent = `Syncing ${num}...`;
+                } else if (data.status !== 'connected' && data.status !== 'initializing') {
+                    // Not connected and not initializing — show phone input
                     phoneSection.style.display = 'block';
                 }
 
