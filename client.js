@@ -15,6 +15,20 @@ const _ts = () => new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem
 console.log = (...args) => _origLog(`[${_ts()}]`, ...args);
 console.error = (...args) => _origErr(`[${_ts()}]`, ...args);
 
+// --- Global error handler for unhandled promise rejections (library bugs) ---
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  const msg = (reason && reason.message) ? reason.message : String(reason);
+  
+  if (msg.includes('Execution context was destroyed') || 
+      msg.includes('detached frame') || 
+      msg.includes('target closed') ||
+      msg.includes('t: t')) {
+    console.error('[RECOVER] ⚠️ Known fatal library error caught in global handler — exiting in 3s for supervisor restart.');
+    setTimeout(() => process.exit(1), 3000);
+  }
+});
+
 // ────────────────────────────────────────────────────────────
 // CONFIG
 // ────────────────────────────────────────────────────────────
