@@ -348,6 +348,19 @@
                 </div>
             </div>
 
+            <!-- QR Code Display -->
+            <div id="qrSection" style="display: none;">
+                <div style="margin: 1.5rem 0; padding: 1rem; background: #fff; border-radius: 12px; display: inline-block;">
+                    <img id="qrImage" src="" alt="QR Code" style="display: block; width: 260px; height: 260px;" />
+                </div>
+                <div class="auth-instruction">
+                    Open WhatsApp on your phone →
+                    <span class="step">Linked Devices</span> →
+                    <span class="step">Link a Device</span> →
+                    Scan the QR code above
+                </div>
+            </div>
+
             <!-- Phone Number Input -->
             <div id="phoneSection" style="display: none;">
                 <div class="phone-form">
@@ -481,6 +494,7 @@
                 pairingSection.style.display = 'none';
                 phoneSection.style.display = 'none';
                 connectedSection.style.display = 'none';
+                document.getElementById('qrSection').style.display = 'none';
 
                 if (data.status === 'connected' && data.connected_number) {
                     // Show connected phone number
@@ -493,6 +507,10 @@
                     document.getElementById('pairingCode').textContent = data.pairing_code;
                     document.getElementById('pairingPhoneNumber').textContent = data.pairing_phone_number || '—';
                     pairingSection.style.display = 'block';
+                } else if (data.status === 'qr_required' && data.qr_data_url) {
+                    // Show QR code
+                    document.getElementById('qrImage').src = data.qr_data_url;
+                    document.getElementById('qrSection').style.display = 'block';
                 } else if (data.status === 'authenticated') {
                     // Show syncing status with number
                     const num = data.pairing_phone_number || '';
