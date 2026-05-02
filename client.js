@@ -22,12 +22,15 @@ process.on('unhandledRejection', (reason, promise) => {
   let fullStr = '';
   try { fullStr = JSON.stringify(reason) || ''; } catch {}
   
+  console.log(`[DEBUG Error] msg="${msg}" fullStr="${fullStr}" type=${typeof reason}`);
+  
   if (msg.includes('Execution context was destroyed') || 
       msg.includes('detached frame') || 
       msg.includes('target closed') || 
       msg.includes('t: t') ||
       fullStr.includes('"t":"t"') ||
-      (reason && reason.t === 't')) {
+      (reason && reason.t === 't') ||
+      String(reason).includes('t: t')) {
     console.error('[RECOVER] ⚠️ Known fatal library error caught in global handler — exiting in 3s for supervisor restart.');
     setTimeout(() => process.exit(1), 3000);
   }
