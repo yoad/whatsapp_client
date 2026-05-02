@@ -19,11 +19,15 @@ console.error = (...args) => _origErr(`[${_ts()}]`, ...args);
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
   const msg = (reason && reason.message) ? reason.message : String(reason);
+  let fullStr = '';
+  try { fullStr = JSON.stringify(reason) || ''; } catch {}
   
   if (msg.includes('Execution context was destroyed') || 
       msg.includes('detached frame') || 
-      msg.includes('target closed') ||
-      msg.includes('t: t')) {
+      msg.includes('target closed') || 
+      msg.includes('t: t') ||
+      fullStr.includes('"t":"t"') ||
+      (reason && reason.t === 't')) {
     console.error('[RECOVER] ⚠️ Known fatal library error caught in global handler — exiting in 3s for supervisor restart.');
     setTimeout(() => process.exit(1), 3000);
   }
@@ -32,11 +36,15 @@ process.on('unhandledRejection', (reason, promise) => {
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err);
   const msg = err && err.message ? err.message : String(err);
+  let fullStr = '';
+  try { fullStr = JSON.stringify(err) || ''; } catch {}
   
   if (msg.includes('Execution context was destroyed') || 
       msg.includes('detached frame') || 
       msg.includes('target closed') || 
-      msg.includes('t: t')) {
+      msg.includes('t: t') ||
+      fullStr.includes('"t":"t"') ||
+      (err && err.t === 't')) {
     console.error('[RECOVER] ⚠️ Known fatal library error caught in uncaughtException handler — exiting in 3s for supervisor restart.');
     setTimeout(() => process.exit(1), 3000);
   }
