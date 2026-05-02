@@ -639,9 +639,9 @@ async function processCommandQueue() {
     }
   } finally {
     processingCommand = false;
+    console.log('[CMD] Done processing. Waiting 5s before next command...');
     setTimeout(processCommandQueue, 5000);
   }
-}
 }
 
 // ────────────────────────────────────────────────────────────
