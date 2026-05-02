@@ -303,8 +303,8 @@ client.on('ready', async () => {
   }
   readyHandled = true;
   console.log('WhatsApp client is ready!');
-  console.log('Waiting 30 seconds for WhatsApp to fully sync...');
-  await delay(30000);
+  console.log('Waiting 60 seconds for WhatsApp to fully sync...');
+  await delay(60000);
 
   clientReady = true;
   connectionStatus = 'connected';
