@@ -512,16 +512,22 @@ async function handleCommand(eventType, eventData) {
         const { message_id, chat_id, emoji } = eventData;
         if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji are required');
 
-        // Fetch the specific message to react to it
-        const chat = await retry(() => client.getChatById(chat_id), `react-${chat_id}`);
-        const messages = await chat.fetchMessages({ limit: 50 });
-        const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
+        // Reactions are best-effort — WA often rejects them for older messages.
+        // Use a single attempt (no retry) and never propagate the error.
+        try {
+          const chat = await client.getChatById(chat_id);
+          const messages = await chat.fetchMessages({ limit: 50 });
+          const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
 
-        if (targetMsg) {
-          await targetMsg.react(emoji);
-          console.log(`[CMD] Reacted with ${emoji} to ${message_id}`);
-        } else {
-          throw new Error(`Message ${message_id} not found in recent messages`);
+          if (targetMsg) {
+            await targetMsg.react(emoji);
+            console.log(`[CMD] Reacted with ${emoji} to ${message_id}`);
+          } else {
+            console.log(`[CMD] React skipped — message ${message_id} not in recent 50`);
+          }
+        } catch (reactErr) {
+          // Non-fatal: log and continue
+          console.log(`[CMD] React failed (ignored): ${reactErr.message}`);
         }
 
         fireHAEvent('whatsapp_response', {
