@@ -440,10 +440,24 @@ client.on('message_edit', async (msg, newBody, prevBody) => {
 // ────────────────────────────────────────────────────────────
 // COMMAND HANDLERS — process commands from other addons
 // ────────────────────────────────────────────────────────────
+let commandQueue = [];
+let processingCommand = false;
+
 async function handleCommand(eventType, eventData) {
   const requestId = eventData.request_id || `auto-${Date.now()}`;
+  console.log(`[CMD] Queued ${eventType} (request_id: ${requestId})`);
+  commandQueue.push({ eventType, eventData, requestId });
+  processCommandQueue();
+}
 
-  console.log(`[CMD] Received ${eventType} (request_id: ${requestId})`);
+async function processCommandQueue() {
+  if (processingCommand) return;
+  if (commandQueue.length === 0) return;
+
+  processingCommand = true;
+  const { eventType, eventData, requestId } = commandQueue.shift();
+  
+  console.log(`[CMD] Processing ${eventType} (request_id: ${requestId})... (${commandQueue.length} left in queue)`);
 
   try {
     switch (eventType) {
@@ -503,8 +517,6 @@ async function handleCommand(eventType, eventData) {
         const { message_id, chat_id, emoji } = eventData;
         if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji are required');
 
-        // Reactions are best-effort — WA often rejects them for older messages.
-        // Use a single attempt (no retry) and never propagate the error.
         try {
           const chat = await client.getChatById(chat_id);
           const messages = await chat.fetchMessages({ limit: 50 });
@@ -517,7 +529,6 @@ async function handleCommand(eventType, eventData) {
             console.log(`[CMD] React skipped — message ${message_id} not in recent 50`);
           }
         } catch (reactErr) {
-          // Non-fatal: log and continue
           console.log(`[CMD] React failed (ignored): ${reactErr.message}`);
         }
 
@@ -578,11 +589,13 @@ async function handleCommand(eventType, eventData) {
       error: err.message
     });
 
-    // Detached frame = Puppeteer browser died silently — trigger a full restart
     if (isDetachedFrameError(err)) {
       console.error('[CMD] Detached frame error detected — scheduling process restart.');
       restartDueToDetachedFrame('command-error');
     }
+  } finally {
+    processingCommand = false;
+    setTimeout(processCommandQueue, 1000);
   }
 }
 
