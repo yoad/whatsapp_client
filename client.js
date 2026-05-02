@@ -595,7 +595,7 @@ async function processCommandQueue() {
     }
   } finally {
     processingCommand = false;
-    setTimeout(processCommandQueue, 1000);
+    setTimeout(processCommandQueue, 5000);
   }
 }
 
