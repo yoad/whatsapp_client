@@ -4,6 +4,7 @@ FROM node:18-slim
 # Install Chromium and its dependencies (required by whatsapp-web.js / Puppeteer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    ca-certificates \
     chromium \
     fonts-liberation \
     libappindicator3-1 \
