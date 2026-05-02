@@ -3,8 +3,6 @@ FROM node:18-slim
 
 # Install Chromium and its dependencies (required by whatsapp-web.js / Puppeteer)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    ca-certificates \
     chromium \
     fonts-liberation \
     libappindicator3-1 \
@@ -32,8 +30,6 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Set working directory
 WORKDIR /usr/src/app
 
-# Force git to use HTTPS instead of SSH
-RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/
 
 # Install dependencies
 COPY package*.json ./
