@@ -92,7 +92,13 @@ function savePhoneNumber(number) {
   }
 }
 
-let phoneNumber = options.PHONE_NUMBER || loadSavedPhoneNumber();
+let phoneNumber = options.PHONE_NUMBER;
+if (phoneNumber === undefined) {
+  phoneNumber = loadSavedPhoneNumber();
+} else if (phoneNumber === '') {
+  console.log('[Config] Phone number explicitly cleared in options — deleting saved phone number file.');
+  try { require('fs').unlinkSync(PHONE_NUMBER_FILE); } catch {}
+}
 
 if (phoneNumber) {
   console.log(`Phone number pairing enabled for: ${phoneNumber}`);
