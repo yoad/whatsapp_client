@@ -182,6 +182,7 @@ console.log('[Init] WhatsApp client instance created');
 // --- All client events for logging ---
 client.on('authenticated', () => {
   console.log('[Auth] ✅ Authenticated successfully — session is valid');
+  connectionStatus = 'authenticated';
 });
 
 client.on('auth_failure', (msg) => {

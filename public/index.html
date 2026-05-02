@@ -405,7 +405,8 @@
             disconnected: { cls: 'status-disconnected', text: 'Disconnected' },
             qr_required:  { cls: 'status-qr',          text: 'QR Code Required' },
             pairing_code: { cls: 'status-pairing',      text: 'Pairing Code Ready' },
-            initializing: { cls: 'status-initializing', text: 'Initializing...' }
+            initializing: { cls: 'status-initializing', text: 'Initializing...' },
+            authenticated: { cls: 'status-pairing',     text: 'Authenticated, syncing...' }
         };
 
         async function requestPairing() {
