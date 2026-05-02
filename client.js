@@ -638,7 +638,6 @@ async function processCommandQueue() {
   
   processingCommand = false;
 }
-}
 
 // ────────────────────────────────────────────────────────────
 // HA WEBSOCKET — subscribe to command events in real-time
