@@ -327,40 +327,23 @@ function isDetachedFrameError(err) {
 
 let restartInProgress = false;
 
-async function restartDueToDetachedFrame() {
-  if (restartInProgress) {
-    console.log('[RECOVER] Restart already in progress — skipping.');
-    return;
-  }
+async function restartDueToDetachedFrame(source) {
+  if (restartInProgress) return;
   restartInProgress = true;
-  clientReady = false;
-  connectionStatus = 'disconnected';
-  readyHandled = false;
 
-  console.error('[RECOVER] ⚠️  Detached frame detected — forcing client restart...');
-  fireHAEvent('whatsapp_status', { status: 'disconnected', reason: 'detached_frame', timestamp: Date.now() });
+  console.error(`[RECOVER] ⚠️  Detached frame detected (${source}) — exiting in 3s so supervisor can restart.`);
+  fireHAEvent('whatsapp_status', { status: 'disconnected', reason: 'detached_frame', timestamp: Date.now() }).catch(() => {});
 
-  try {
-    await client.destroy();
-    console.log('[RECOVER] Client destroyed. Restarting in 15s...');
-  } catch (e) {
-    console.error('[RECOVER] destroy() error (ignored):', e.message);
-  }
-
-  await delay(15000);
-  restartInProgress = false;
-
-  try {
-    await startClient();
-    console.log('[RECOVER] ✅ Client restarted successfully.');
-  } catch (err) {
-    console.error('[RECOVER] ❌ Restart failed:', err.message);
-    setTimeout(() => startClient().catch(e => console.error('[RECOVER] Retry failed:', e.message)), 60000);
-  }
+  // Give HA event time to fire, then hard-exit.
+  // The HA supervisor automatically restarts the addon container.
+  // WhatsApp auth is persisted to /data so no QR re-scan is needed.
+  setTimeout(() => {
+    console.error('[RECOVER] 🔄 Exiting now — supervisor will restart.');
+    process.exit(1);
+  }, 3000);
 }
 
-// Periodic health check — if client thinks it's connected but the frame is dead,
-// a simple getState() call will throw. Catches silent failures before they accumulate.
+// Periodic health check — catches silent frame death before the next command fails.
 setInterval(async () => {
   if (!clientReady) return;
   try {
@@ -368,10 +351,10 @@ setInterval(async () => {
   } catch (err) {
     if (isDetachedFrameError(err)) {
       console.error('[HEALTH] ❌ Health check caught detached frame:', err.message);
-      restartDueToDetachedFrame();
+      restartDueToDetachedFrame('health-check');
     }
   }
-}, 5 * 60 * 1000); // every 5 minutes
+}, 2 * 60 * 1000); // every 2 minutes
 
 // ────────────────────────────────────────────────────────────
 // MESSAGE LISTENERS — fire HA events for each message
@@ -596,8 +579,8 @@ async function handleCommand(eventType, eventData) {
 
     // Detached frame = Puppeteer browser died silently — trigger a full restart
     if (isDetachedFrameError(err)) {
-      console.error('[CMD] Detached frame error detected — scheduling client restart.');
-      restartDueToDetachedFrame();
+      console.error('[CMD] Detached frame error detected — scheduling process restart.');
+      restartDueToDetachedFrame('command-error');
     }
   }
 }
