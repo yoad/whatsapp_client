@@ -1,8 +1,8 @@
 # /addons/whatsapp_client/config.yaml
 name: "WhatsApp Client"
-version: "0.0.1"
+version: "0.1.0"
 slug: "whatsapp_client"
-description: "Stateless WhatsApp client that exposes messaging via HA events."
+description: "Minimal WhatsApp client — QR login, test message."
 arch:
   - armv7
   - aarch64
@@ -16,7 +16,5 @@ panel_title: "WhatsApp"
 host_network: true
 options:
   TEST_MESSAGE: true
-  PHONE_NUMBER: ""
 schema:
   TEST_MESSAGE: bool
-  PHONE_NUMBER: "str?"

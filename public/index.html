@@ -1,562 +1,102 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WhatsApp Client</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: #0b141a;
-            color: #e9edef;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .container {
-            text-align: center;
-            padding: 2rem;
-            max-width: 480px;
-            width: 100%;
-        }
-
-        .logo {
-            font-size: 3rem;
-            margin-bottom: 0.5rem;
-        }
-
-        h1 {
-            font-size: 1.4rem;
-            font-weight: 500;
-            margin-bottom: 2rem;
-            color: #8696a0;
-        }
-
-        .status-card {
-            background: #1f2c34;
-            border-radius: 12px;
-            padding: 2rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-        }
-
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px 20px;
-            border-radius: 20px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-        }
-
-        .status-badge .dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            animation: pulse 2s ease-in-out infinite;
-        }
-
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
-
-        .status-connected { background: rgba(37, 211, 102, 0.15); color: #25d366; }
-        .status-connected .dot { background: #25d366; }
-
-        .status-disconnected { background: rgba(234, 67, 53, 0.15); color: #ea4335; }
-        .status-disconnected .dot { background: #ea4335; }
-
-        .status-qr { background: rgba(251, 188, 4, 0.15); color: #fbbc04; }
-        .status-qr .dot { background: #fbbc04; }
-
-        .status-pairing { background: rgba(0, 168, 232, 0.15); color: #00a8e8; }
-        .status-pairing .dot { background: #00a8e8; }
-
-        .status-initializing { background: rgba(134, 150, 160, 0.15); color: #8696a0; }
-        .status-initializing .dot { background: #8696a0; }
-
-        .connected-number {
-            font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-            font-size: 1.6rem;
-            font-weight: 600;
-            color: #25d366;
-            margin: 1rem 0 0.5rem;
-            letter-spacing: 2px;
-        }
-
-        /* Phone number input */
-        .phone-form {
-            margin: 1.5rem 0 0.5rem;
-        }
-
-        .phone-form label {
-            display: block;
-            color: #8696a0;
-            font-size: 0.85rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .phone-input-row {
-            display: flex;
-            gap: 8px;
-            justify-content: center;
-        }
-
-        .phone-input-row input {
-            flex: 1;
-            max-width: 260px;
-            padding: 10px 14px;
-            border-radius: 8px;
-            border: 1px solid #3b4a54;
-            background: #0b141a;
-            color: #e9edef;
-            font-size: 1rem;
-            font-family: inherit;
-            outline: none;
-            transition: border-color 0.2s;
-        }
-
-        .phone-input-row input:focus {
-            border-color: #00a8e8;
-        }
-
-        .phone-input-row input::placeholder {
-            color: #5a6b75;
-        }
-
-        .phone-input-row button {
-            padding: 10px 18px;
-            border-radius: 8px;
-            border: none;
-            background: #00a884;
-            color: #fff;
-            font-size: 0.9rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s, opacity 0.2s;
-            white-space: nowrap;
-        }
-
-        .phone-input-row button:hover {
-            background: #06cf9c;
-        }
-
-        .phone-input-row button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .phone-hint {
-            color: #5a6b75;
-            font-size: 0.75rem;
-            margin-top: 6px;
-        }
-
-        .phone-error {
-            color: #ea4335;
-            font-size: 0.8rem;
-            margin-top: 6px;
-            min-height: 1.2em;
-        }
-
-        /* QR code */
-        .qr-container {
-            margin: 1.5rem 0;
-            padding: 1rem;
-            background: #fff;
-            border-radius: 12px;
-            display: inline-block;
-        }
-
-        .qr-container img {
-            display: block;
-            width: 280px;
-            height: 280px;
-        }
-
-        /* Pairing code */
-        .pairing-code-container {
-            margin: 1.5rem 0;
-            padding: 1.5rem;
-        }
-
-        .pairing-code {
-            font-family: 'SF Mono', 'Consolas', 'Courier New', monospace;
-            font-size: 2.8rem;
-            font-weight: 700;
-            letter-spacing: 6px;
-            color: #00a8e8;
-            background: rgba(0, 168, 232, 0.08);
-            border: 2px solid rgba(0, 168, 232, 0.25);
-            border-radius: 12px;
-            padding: 1rem 2rem;
-            display: inline-block;
-            user-select: all;
-            cursor: pointer;
-            transition: background 0.2s, border-color 0.2s;
-        }
-
-        .pairing-code:hover {
-            background: rgba(0, 168, 232, 0.15);
-            border-color: rgba(0, 168, 232, 0.5);
-        }
-
-        .pairing-code-hint {
-            font-size: 0.75rem;
-            color: #8696a0;
-            margin-top: 0.5rem;
-        }
-
-        .auth-instruction {
-            color: #8696a0;
-            font-size: 0.85rem;
-            margin-top: 1rem;
-            line-height: 1.6;
-        }
-
-        .auth-instruction .step {
-            color: #e9edef;
-            font-weight: 500;
-        }
-
-        .or-divider {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin: 1.2rem 0;
-            color: #5a6b75;
-            font-size: 0.8rem;
-        }
-
-        .or-divider::before,
-        .or-divider::after {
-            content: '';
-            flex: 1;
-            height: 1px;
-            background: #3b4a54;
-        }
-
-        /* Info rows */
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid rgba(134, 150, 160, 0.1);
-            font-size: 0.85rem;
-        }
-
-        .info-row:last-child { border-bottom: none; }
-        .info-label { color: #8696a0; }
-        .info-value { color: #e9edef; font-weight: 500; }
-
-        .refreshing {
-            color: #8696a0;
-            font-size: 0.75rem;
-            margin-top: 1rem;
-        }
-
-        /* Recent messages */
-        .messages-title {
-            color: #8696a0;
-            font-size: 0.8rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 0.8rem;
-        }
-
-        .msg-item {
-            text-align: left;
-            padding: 10px 0;
-            border-bottom: 1px solid rgba(134, 150, 160, 0.1);
-        }
-
-        .msg-item:last-child { border-bottom: none; }
-
-        .msg-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 4px;
-        }
-
-        .msg-sender {
-            color: #00a884;
-            font-size: 0.8rem;
-            font-weight: 600;
-        }
-
-        .msg-time {
-            color: #5a6b75;
-            font-size: 0.75rem;
-        }
-
-        .msg-body {
-            color: #8696a0;
-            font-size: 0.8rem;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-        }
-
-        .msg-empty {
-            color: #5a6b75;
-            font-size: 0.8rem;
-            font-style: italic;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WhatsApp Client</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #111;
+      color: #eee;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: #1a1a2e;
+      border-radius: 16px;
+      padding: 40px;
+      text-align: center;
+      max-width: 400px;
+      width: 90%;
+    }
+    .status {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .status.connected { color: #25D366; }
+    .status.qr_required { color: #f0a500; }
+    .status.disconnected { color: #e74c3c; }
+    h1 {
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+    .phone {
+      font-size: 16px;
+      color: #25D366;
+      margin-bottom: 20px;
+    }
+    .qr-container {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      display: inline-block;
+      margin-top: 16px;
+    }
+    .qr-container img {
+      display: block;
+      width: 260px;
+      height: 260px;
+    }
+    .hint {
+      font-size: 13px;
+      color: #666;
+      margin-top: 16px;
+      line-height: 1.5;
+    }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="logo">📱</div>
-        <h1>WhatsApp Client</h1>
+  <div class="card">
+    <div class="status" id="status">Loading...</div>
+    <h1>WhatsApp Client</h1>
+    <div id="content"></div>
+  </div>
 
-        <div class="status-card">
-            <div id="statusBadge" class="status-badge status-initializing">
-                <span class="dot"></span>
-                <span id="statusText">Initializing...</span>
-            </div>
+  <script>
+    async function poll() {
+      try {
+        const res = await fetch('api/status');
+        const data = await res.json();
+        const statusEl = document.getElementById('status');
+        const contentEl = document.getElementById('content');
 
-            <!-- Connected Phone Number -->
-            <div id="connectedSection" style="display: none;">
-                <div class="connected-number" id="connectedNumber"></div>
-            </div>
+        statusEl.textContent = data.status.replace(/_/g, ' ');
+        statusEl.className = 'status ' + data.status;
 
-            <!-- Pairing Code Display -->
-            <div id="pairingSection" style="display: none;">
-                <div id="pairingPhoneInfo" style="color: #8696a0; font-size: 0.9rem; margin-bottom: 0.5rem;">Pairing with: <span id="pairingPhoneNumber" style="color: #00a8e8; font-weight: 600;"></span></div>
-                <div class="pairing-code-container">
-                    <div id="pairingCode" class="pairing-code"></div>
-                    <div class="pairing-code-hint">Click to select</div>
-                </div>
-                <div style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
-                    <button onclick="showPhoneInput()" style="background: none; border: 1px solid #3b4a54; color: #8696a0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">Wrong number? Fix typo</button>
-                </div>
-                <div class="auth-instruction">
-                    Open WhatsApp on your phone →
-                    <span class="step">Settings</span> →
-                    <span class="step">Linked Devices</span> →
-                    <span class="step">Link a Device</span> →
-                    <span class="step">Link with phone number instead</span> →
-                    Enter the code above
-                </div>
-            </div>
-
-            <!-- QR Code Display -->
-            <div id="qrSection" style="display: none;">
-                <div style="margin: 1.5rem 0; padding: 1rem; background: #fff; border-radius: 12px; display: inline-block;">
-                    <img id="qrImage" src="" alt="QR Code" style="display: block; width: 260px; height: 260px;" />
-                </div>
-                <div class="auth-instruction">
-                    Open WhatsApp on your phone →
-                    <span class="step">Linked Devices</span> →
-                    <span class="step">Link a Device</span> →
-                    Scan the QR code above
-                </div>
-            </div>
-
-            <!-- Phone Number Input -->
-            <div id="phoneSection" style="display: none;">
-                <div class="phone-form">
-                    <label for="phoneInput">Enter your WhatsApp phone number</label>
-                    <div class="phone-input-row">
-                        <input type="tel" id="phoneInput" placeholder="e.g. 972525628289" autocomplete="tel" />
-                        <button id="pairBtn" onclick="requestPairing()">Get Code</button>
-                    </div>
-                    <div class="phone-hint">International format, no + or spaces</div>
-                    <div class="phone-error" id="phoneError"></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="status-card">
-            <div class="info-row">
-                <span class="info-label">Status</span>
-                <span class="info-value" id="infoStatus">—</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Phone Number</span>
-                <span class="info-value" id="infoPhone">—</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Auth Method</span>
-                <span class="info-value" id="infoAuthMethod">—</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Last Heartbeat</span>
-                <span class="info-value" id="infoHeartbeat">—</span>
-            </div>
-            <div class="info-row">
-                <span class="info-label">Heartbeat #</span>
-                <span class="info-value" id="infoCount">—</span>
-            </div>
-        </div>
-
-        <div class="status-card" id="messagesCard" style="display: none;">
-            <div class="messages-title">Recent Messages</div>
-            <div id="messagesList"></div>
-        </div>
-
-        <div class="refreshing">Auto-refreshing every 5 seconds</div>
-    </div>
-
-    <script>
-        function escapeHtml(str) {
-            const d = document.createElement('div');
-            d.textContent = str || '';
-            return d.innerHTML;
+        if (data.status === 'connected' && data.connected_number) {
+          contentEl.innerHTML = `<div class="phone">📱 ${data.connected_number}</div>`;
+        } else if (data.status === 'qr_required' && data.qr_data_url) {
+          contentEl.innerHTML = `
+            <div class="qr-container"><img src="${data.qr_data_url}" alt="QR Code"></div>
+            <div class="hint">Open WhatsApp → Settings → Linked Devices → Link a Device</div>
+          `;
+        } else {
+          contentEl.innerHTML = `<div class="hint">Waiting...</div>`;
         }
+      } catch (e) {
+        document.getElementById('status').textContent = 'error';
+      }
+    }
 
-        const STATUS_MAP = {
-            connected:    { cls: 'status-connected',    text: 'Connected' },
-            disconnected: { cls: 'status-disconnected', text: 'Disconnected' },
-            qr_required:  { cls: 'status-qr',          text: 'QR Code Required' },
-            pairing_code: { cls: 'status-pairing',      text: 'Pairing Code Ready' },
-            initializing: { cls: 'status-initializing', text: 'Initializing...' },
-            authenticated: { cls: 'status-pairing',     text: 'Authenticated, syncing...' }
-        };
-
-        async function requestPairing() {
-            const input = document.getElementById('phoneInput');
-            const btn = document.getElementById('pairBtn');
-            const errorEl = document.getElementById('phoneError');
-            const number = input.value.replace(/\D/g, '');
-
-            errorEl.textContent = '';
-
-            if (!number || number.length < 10) {
-                errorEl.textContent = 'Enter a valid phone number in international format';
-                return;
-            }
-
-            btn.disabled = true;
-            btn.textContent = 'Requesting...';
-
-            try {
-                const res = await fetch('./api/pair', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone_number: number })
-                });
-                const data = await res.json();
-
-                if (!res.ok) {
-                    errorEl.textContent = data.error || 'Failed to request pairing code';
-                    btn.disabled = false;
-                    btn.textContent = 'Get Code';
-                } else {
-                    // Server is restarting — show message and wait
-                    btn.textContent = 'Restarting...';
-                    document.getElementById('statusText').textContent = 'Restarting...';
-                    errorEl.textContent = '';
-                    // Keep polling — refresh will pick up the pairing code once server is back
-                }
-            } catch (e) {
-                errorEl.textContent = 'Network error — is the client running?';
-                btn.disabled = false;
-                btn.textContent = 'Get Code';
-            }
-        }
-
-        // Allow Enter key to submit
-        document.getElementById('phoneInput').addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') requestPairing();
-        });
-
-        function showPhoneInput() {
-            document.getElementById('pairingSection').style.display = 'none';
-            document.getElementById('phoneSection').style.display = 'block';
-            document.getElementById('phoneInput').focus();
-        }
-
-        async function refresh() {
-            try {
-                const res = await fetch('./api/status');
-                const data = await res.json();
-                const info = STATUS_MAP[data.status] || STATUS_MAP.initializing;
-
-                // Update badge
-                const badge = document.getElementById('statusBadge');
-                badge.className = 'status-badge ' + info.cls;
-                document.getElementById('statusText').textContent = info.text;
-
-                const pairingSection = document.getElementById('pairingSection');
-                const phoneSection = document.getElementById('phoneSection');
-                const connectedSection = document.getElementById('connectedSection');
-
-                // Reset visibility
-                pairingSection.style.display = 'none';
-                phoneSection.style.display = 'none';
-                connectedSection.style.display = 'none';
-                document.getElementById('qrSection').style.display = 'none';
-
-                if (data.status === 'connected' && data.connected_number) {
-                    // Show connected phone number
-                    const num = data.connected_number;
-                    const formatted = num.replace(/@.*/, '');
-                    document.getElementById('connectedNumber').textContent = formatted;
-                    connectedSection.style.display = 'block';
-                } else if (data.status === 'pairing_code' && data.pairing_code) {
-                    // Show pairing code
-                    document.getElementById('pairingCode').textContent = data.pairing_code;
-                    document.getElementById('pairingPhoneNumber').textContent = data.pairing_phone_number || '—';
-                    pairingSection.style.display = 'block';
-                } else if (data.status === 'qr_required' && data.qr_data_url) {
-                    // Show QR code
-                    document.getElementById('qrImage').src = data.qr_data_url;
-                    document.getElementById('qrSection').style.display = 'block';
-                } else if (data.status === 'authenticated') {
-                    // Show syncing status with number
-                    const num = data.pairing_phone_number || '';
-                    document.getElementById('statusText').textContent = `Syncing ${num}...`;
-                } else if (data.status !== 'connected' && data.status !== 'initializing') {
-                    // Not connected and not initializing — show phone input
-                    phoneSection.style.display = 'block';
-                }
-
-                // Info rows
-                document.getElementById('infoStatus').textContent = data.status;
-                document.getElementById('infoPhone').textContent = data.connected_number
-                    ? data.connected_number.replace(/@.*/, '')
-                    : '—';
-                document.getElementById('infoAuthMethod').textContent =
-                    data.auth_method === 'pairing_code' ? 'Phone Number' : 'QR Code';
-                document.getElementById('infoHeartbeat').textContent = data.last_heartbeat
-                    ? new Date(data.last_heartbeat).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' })
-                    : '—';
-                document.getElementById('infoCount').textContent = data.heartbeat_count || '—';
-
-                // Recent messages
-                const messagesCard = document.getElementById('messagesCard');
-                const messagesList = document.getElementById('messagesList');
-                if (data.recent_messages && data.recent_messages.length > 0) {
-                    messagesCard.style.display = 'block';
-                    messagesList.innerHTML = data.recent_messages.map(m =>
-                        `<div class="msg-item">
-                            <div class="msg-header">
-                                <span class="msg-sender">${escapeHtml(m.sender)}</span>
-                                <span class="msg-time">${m.time}</span>
-                            </div>
-                            <div class="msg-body">${escapeHtml(m.body)}</div>
-                        </div>`
-                    ).join('');
-                } else {
-                    messagesCard.style.display = 'block';
-                    messagesList.innerHTML = '<div class="msg-empty">No messages yet</div>';
-                }
-            } catch (e) {
-                console.error('Refresh failed:', e);
-            }
-        }
-
-        refresh();
-        setInterval(refresh, 5000);
-    </script>
+    poll();
+    setInterval(poll, 3000);
+  </script>
 </body>
 </html>

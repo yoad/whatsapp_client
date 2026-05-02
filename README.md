@@ -1,43 +1,25 @@
 # WhatsApp Client for Home Assistant
 
-A stateless WhatsApp Web client that runs as a Home Assistant add-on. Exposes WhatsApp messaging via HA events and accepts commands via HA event subscriptions.
+A WhatsApp Web client that runs as a Home Assistant add-on. Bridges WhatsApp messaging to HA via events and accepts commands from other add-ons through a round-robin command queue.
+
+Built on [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) v1.34.7.
 
 ## Features
 
-- **Two authentication methods:**
-  - **Phone Number Pairing** — Enter your phone number in the web UI and get an 8-digit code to link your device. No camera needed.
-  - **QR Code** — Traditional scan-to-link via the ingress web UI or terminal logs.
-- **Session persistence** — Once linked, the session survives add-on restarts. Re-authentication is only needed if you log out from your phone.
-- **Real-time message forwarding** — Incoming messages, self-sent messages, and message edits are forwarded as HA events.
-- **Command interface** — Other add-ons can send messages, fetch history, react to messages, and list groups via HA events.
-- **Heartbeat monitoring** — Periodic status events for health checks.
-- **Ingress web UI** — Status dashboard accessible from the HA sidebar.
+- **QR Code Authentication** — Scan-to-link via the ingress web UI or terminal logs
+- **Session persistence** — Once linked, the session survives add-on restarts (stored in `/data/`)
+- **Real-time message forwarding** — Incoming messages, self-sent messages, and message edits are forwarded as HA events
+- **Command interface** — Other add-ons can send messages, fetch history, react to messages, and list groups via HA events
+- **Round-robin command queue** — Commands from multiple apps are processed fairly with configurable delay between requests
+- **Navigation error recovery** — Gracefully handles WhatsApp Web's internal page navigations without crashing
+- **Heartbeat monitoring** — Periodic status events every 2 minutes
+- **Ingress web UI** — Status dashboard accessible from the HA sidebar
 
 ## Authentication
 
-### Option 1: Phone Number (Recommended)
-
-The easiest method, especially for headless/Docker setups:
-
-1. Open the add-on's web UI from the HA sidebar (click **WhatsApp**).
-2. Enter your phone number in international format (e.g. `972525628289` for Israel, `12025550108` for US) — no `+` or spaces.
-3. Click **Get Code**.
-4. On your phone, open WhatsApp → **Settings** → **Linked Devices** → **Link a Device** → **Link with phone number instead** → Enter the 8-digit code shown.
-
-The phone number is saved to `/data/phone_number.txt` so if re-authentication is ever needed (e.g. after a logout), it will automatically use pairing code again.
-
-You can also pre-configure the phone number in the add-on config:
-
-```yaml
-PHONE_NUMBER: "972525628289"
-```
-
-### Option 2: QR Code
-
-If no phone number is configured, the add-on falls back to QR code authentication:
-
-1. Open the add-on's web UI — a QR code will be displayed.
-2. On your phone, open WhatsApp → **Settings** → **Linked Devices** → **Link a Device** → Scan the QR code.
+1. Open the add-on's web UI from the HA sidebar (click **WhatsApp**)
+2. A QR code will be displayed
+3. On your phone: WhatsApp → **Settings** → **Linked Devices** → **Link a Device** → Scan the QR code
 
 The QR code is also printed to the add-on's terminal logs.
 
@@ -45,52 +27,96 @@ The QR code is also printed to the add-on's terminal logs.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `TEST_MESSAGE` | `bool` | `true` | Send a test message on successful connection |
-| `PHONE_NUMBER` | `str` | `""` | Phone number for pairing code auth (international format, no `+`) |
+| `TEST_MESSAGE` | `bool` | `true` | Send a test message to self on successful connection |
 
 ## HA Events
 
 ### Emitted Events
 
-| Event | Description |
-|---|---|
-| `whatsapp_status` | Connection status changes and heartbeats |
-| `whatsapp_message` | Incoming messages from others |
-| `whatsapp_message_create` | Self-sent messages |
-| `whatsapp_message_edit` | Edited messages |
-| `whatsapp_response` | Responses to commands |
-
-### Command Events (subscribe to these)
-
-| Event | Required Fields | Description |
+| Event | Fields | Description |
 |---|---|---|
-| `whatsapp_command_send` | `target_id`, `message` | Send a message |
-| `whatsapp_command_fetch` | `group_id`, `limit?` | Fetch message history |
-| `whatsapp_command_react` | `message_id`, `chat_id`, `emoji` | React to a message |
-| `whatsapp_command_list_groups` | — | List all groups |
-| `whatsapp_command_status` | — | Query connection status |
+| `whatsapp_status` | `status`, `timestamp`, `heartbeat?`, `reason?` | Connection status changes and heartbeats |
+| `whatsapp_message` | `group_id`, `sender`, `body`, `timestamp`, `message_id`, `is_group`, `from_me`, `has_media` | Incoming messages from others |
+| `whatsapp_message_create` | `group_id`, `body`, `timestamp`, `message_id`, `from_me` | Self-sent messages |
+| `whatsapp_message_edit` | `group_id`, `message_id`, `body`, `new_body`, `prev_body`, `from_me`, `timestamp` | Edited messages |
+| `whatsapp_response` | `request_id`, `command`, `success`, `data?`, `error?` | Responses to commands (correlated by `request_id`) |
 
-All command events accept an optional `request_id` field. The response is fired as a `whatsapp_response` event with the same `request_id`.
+### Command Events
+
+Other add-ons fire these events to send commands to the client:
+
+| Event | Required Fields | Optional Fields | Description |
+|---|---|---|---|
+| `whatsapp_command_send` | `target_id`, `message` | `quoted_message_id`, `app_id`, `request_id` | Send a message (supports replies) |
+| `whatsapp_command_fetch` | `group_id` | `limit` (default 50), `app_id`, `request_id` | Fetch message history |
+| `whatsapp_command_react` | `message_id`, `chat_id`, `emoji` | `app_id`, `request_id` | React to a message |
+| `whatsapp_command_list_groups` | — | `app_id`, `request_id` | List all groups |
+| `whatsapp_command_status` | — | `app_id`, `request_id` | Query connection status |
+
+### `app_id` and Round-Robin
+
+All command events should include an `app_id` field identifying the sending app:
+
+```javascript
+fireHAEvent('whatsapp_command_send', {
+  app_id: 'bot',           // identifies the app for round-robin scheduling
+  request_id: 'send-123',  // correlates with whatsapp_response
+  target_id: '1234@g.us',
+  message: 'Hello!'
+});
+```
+
+The client maintains a **per-app command queue** and processes them in round-robin order with a 5-second delay between commands. This ensures fair scheduling when multiple apps send commands simultaneously:
+
+```
+bot:       [fetch-1] [fetch-2] [send-1]
+notes:     [react-1]
+translate: [send-1]  [react-1]
+
+Processing order: bot→notes→translate→bot→translate→bot (5s gaps)
+```
+
+| App | `app_id` |
+|---|---|
+| Kindergarten Bot | `bot` |
+| Personal Notes | `notes` |
+| Translator | `translate` |
 
 ## Architecture
 
 ```
-┌──────────────────┐     HA Events      ┌──────────────┐
-│  WhatsApp Web    │ ──────────────────► │    Home      │
-│  (Puppeteer)     │                     │  Assistant   │
-│                  │ ◄────────────────── │              │
-│  LocalAuth       │   WS Commands      │  Other       │
-│  /data/          │                     │  Add-ons     │
-└──────────────────┘                     └──────────────┘
-        │
-        ▼
-┌──────────────────┐
-│  Ingress Web UI  │
-│  :3001           │
-│  - Status page   │
-│  - QR / Pairing  │
+┌──────────────────┐     HA Events      ┌──────────────────────┐
+│  WhatsApp Web    │ ───messages───────► │  Home Assistant       │
+│  (Puppeteer +    │                     │  Event Bus            │
+│   wwebjs 1.34.7) │ ◄──commands──────── │                      │
+│                  │   (round-robin)     │  ┌─────────────────┐ │
+│  LocalAuth       │                     │  │ Kindergarten Bot │ │
+│  /data/          │                     │  │ (app_id: bot)    │ │
+└──────────────────┘                     │  ├─────────────────┤ │
+        │                                │  │ Personal Notes   │ │
+        ▼                                │  │ (app_id: notes)  │ │
+┌──────────────────┐                     │  ├─────────────────┤ │
+│  Ingress Web UI  │                     │  │ Translator       │ │
+│  :3001           │                     │  │ (app_id:translate)│ │
+│  - Status page   │                     │  └─────────────────┘ │
+│  - QR Code       │                     └──────────────────────┘
 └──────────────────┘
 ```
+
+## Error Recovery
+
+### Navigation Errors (Execution context destroyed)
+
+WhatsApp Web occasionally navigates internally, which destroys the Puppeteer execution context. This is handled at two levels:
+
+1. **Library level (v1.34.7)** — The `framenavigated` event triggers automatic re-injection of the client library
+2. **App level** — If a navigation error occurs while the client is connected, it is logged as a non-fatal warning and the process continues running
+
+If a navigation error occurs during initialization (before connection), the process exits and the HA Supervisor restarts it automatically.
+
+### Session Migration
+
+On first run after upgrading from an older library version, the client automatically detects and clears incompatible session data (flagged by `/data/.migrated_v134`).
 
 ## Data Persistence
 
@@ -99,5 +125,26 @@ All persistent data is stored in `/data/`:
 | File | Purpose |
 |---|---|
 | `/data/.wwebjs_auth/` | WhatsApp session data (managed by `LocalAuth`) |
-| `/data/phone_number.txt` | Saved phone number for pairing code auth |
+| `/data/.migrated_v134` | Migration flag — prevents re-clearing session on restarts |
 | `/data/options.json` | Add-on configuration (managed by HA) |
+
+## API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/status` | Connection status, QR data URL, queue lengths, recent messages |
+
+## Changelog
+
+### v0.1.0
+- Upgraded `whatsapp-web.js` from v1.23.0 to v1.34.7
+- Added round-robin command queue by `app_id` with 5s delay
+- Added `whatsapp_command_react` and `whatsapp_command_list_groups` handlers
+- Added `has_media` field to `whatsapp_message` events
+- Added `body` and `from_me` fields to `whatsapp_message_edit` events
+- Added navigation error recovery (non-fatal when connected)
+- Added session migration for v1.23→v1.34 upgrade
+- Removed phone number pairing (QR-only for simplicity)
+
+### v0.0.1
+- Initial release
