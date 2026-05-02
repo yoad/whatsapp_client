@@ -195,8 +195,8 @@ const clientOptions = {
       '--disable-default-apps',
       '--disable-sync',
       '--no-first-run',
-      '--single-process',
       '--no-zygote',
+      '--disable-features=site-per-process'
     ],
     protocolTimeout: 300000,
   }
