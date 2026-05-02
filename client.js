@@ -768,9 +768,31 @@ app.listen(INGRESS_PORT, () => {
 // ────────────────────────────────────────────────────────────
 // STARTUP
 // ────────────────────────────────────────────────────────────
+async function killOrphanedChromium() {
+  // Remove Chromium singleton lock so a fresh instance can start
+  const lockPaths = [
+    '/data/session/SingletonLock',
+    '/data/session/SingletonSocket',
+    '/data/session/SingletonCookie'
+  ];
+  for (const p of lockPaths) {
+    try { require('fs').unlinkSync(p); console.log(`[Startup] Removed stale lock: ${p}`); } catch {}
+  }
+  // Kill any lingering chromium/chrome processes
+  try {
+    require('child_process').execSync('pkill -f "chromium\|chrome" 2>/dev/null || true', { shell: true });
+    console.log('[Startup] Killed orphaned Chromium process(es).');
+    await delay(1500); // let OS clean up
+  } catch {}
+}
+
 async function startClient(maxRetries = 5) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      if (attempt > 1) {
+        console.log('[Startup] Cleaning up before retry...');
+        await killOrphanedChromium();
+      }
       console.log(`[Startup] Initializing WhatsApp client (attempt ${attempt}/${maxRetries})...`);
       console.log('[Startup] Launching Chromium browser...');
       await client.initialize();
