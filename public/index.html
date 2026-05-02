@@ -330,9 +330,13 @@
 
             <!-- Pairing Code Display -->
             <div id="pairingSection" style="display: none;">
+                <div id="pairingPhoneInfo" style="color: #8696a0; font-size: 0.9rem; margin-bottom: 0.5rem;">Pairing with: <span id="pairingPhoneNumber" style="color: #00a8e8; font-weight: 600;"></span></div>
                 <div class="pairing-code-container">
                     <div id="pairingCode" class="pairing-code"></div>
                     <div class="pairing-code-hint">Click to select</div>
+                </div>
+                <div style="margin-top: 0.5rem; margin-bottom: 1.5rem;">
+                    <button onclick="showPhoneInput()" style="background: none; border: 1px solid #3b4a54; color: #8696a0; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.8rem;">Wrong number? Fix typo</button>
                 </div>
                 <div class="auth-instruction">
                     Open WhatsApp on your phone →
@@ -451,6 +455,12 @@
             if (e.key === 'Enter') requestPairing();
         });
 
+        function showPhoneInput() {
+            document.getElementById('pairingSection').style.display = 'none';
+            document.getElementById('phoneSection').style.display = 'block';
+            document.getElementById('phoneInput').focus();
+        }
+
         async function refresh() {
             try {
                 const res = await fetch('./api/status');
@@ -480,6 +490,7 @@
                 } else if (data.status === 'pairing_code' && data.pairing_code) {
                     // Show pairing code
                     document.getElementById('pairingCode').textContent = data.pairing_code;
+                    document.getElementById('pairingPhoneNumber').textContent = data.pairing_phone_number || '—';
                     pairingSection.style.display = 'block';
                 } else if (data.status !== 'connected') {
                     // Not connected — show phone input

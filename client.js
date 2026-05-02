@@ -723,6 +723,7 @@ app.get('/api/status', (req, res) => {
     client_ready: clientReady,
     auth_method: authMethod,
     connected_number: connectedNumber,
+    pairing_phone_number: phoneNumber,
     qr_data_url: currentQRDataUrl,
     pairing_code: currentPairingCode,
     recent_messages: recentMessages,
