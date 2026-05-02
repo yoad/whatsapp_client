@@ -29,6 +29,19 @@ process.on('unhandledRejection', (reason, promise) => {
   }
 });
 
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err);
+  const msg = err && err.message ? err.message : String(err);
+  
+  if (msg.includes('Execution context was destroyed') || 
+      msg.includes('detached frame') || 
+      msg.includes('target closed') || 
+      msg.includes('t: t')) {
+    console.error('[RECOVER] ⚠️ Known fatal library error caught in uncaughtException handler — exiting in 3s for supervisor restart.');
+    setTimeout(() => process.exit(1), 3000);
+  }
+});
+
 // ────────────────────────────────────────────────────────────
 // CONFIG
 // ────────────────────────────────────────────────────────────
@@ -855,22 +868,20 @@ async function killOrphanedChromium() {
   } catch {}
 }
 
-async function startClient(maxRetries = 5) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+async function startClient() {
+  while (true) {
     try {
-      if (attempt > 1) {
-        console.log('[Startup] Cleaning up before retry...');
-        await killOrphanedChromium();
-      }
-      console.log(`[Startup] Initializing WhatsApp client (attempt ${attempt}/${maxRetries})...`);
+      console.log('[Startup] Cleaning up before init...');
+      await killOrphanedChromium();
+      
+      console.log(`[Startup] Initializing WhatsApp client...`);
       console.log('[Startup] Launching Chromium browser...');
       await client.initialize();
       console.log('[Startup] ✅ WhatsApp client initialized successfully');
       return;
     } catch (err) {
-      console.error(`[Startup] ❌ Attempt ${attempt} failed: ${err.message}`);
+      console.error(`[Startup] ❌ Initialization failed: ${err.message}`);
       console.error(`[Startup] Stack: ${err.stack}`);
-      if (attempt === maxRetries) throw err;
       console.log(`[Startup] Retrying in 30 seconds...`);
       await delay(30000);
     }
@@ -893,17 +904,8 @@ async function main() {
   connectHAWebSocket();
 
   // Keep trying to connect to WhatsApp — never give up
-  while (true) {
-    try {
-      await startClient();
-      console.log('[Main] ✅ Client started successfully');
-      return; // connected successfully
-    } catch (err) {
-      console.error('[Main] ❌ Startup failed:', err.message);
-      console.log('[Main] Retrying in 60 seconds...');
-      await delay(60000);
-    }
-  }
+  await startClient();
+  console.log('[Main] ✅ Client started successfully');
 }
 
 main();
