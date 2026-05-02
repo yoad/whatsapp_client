@@ -31,6 +31,9 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Set working directory
 WORKDIR /usr/src/app
 
+# Force git to use HTTPS instead of SSH
+RUN git config --global url."https://github.com/".insteadOf ssh://git@github.com/
+
 # Install dependencies
 COPY package*.json ./
 RUN npm install
