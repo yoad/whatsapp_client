@@ -315,6 +315,65 @@ client.on('disconnected', async (reason) => {
 });
 
 // ────────────────────────────────────────────────────────────
+// DETACHED FRAME RECOVERY
+// ────────────────────────────────────────────────────────────
+function isDetachedFrameError(err) {
+  const msg = (err && err.message) ? err.message.toLowerCase() : '';
+  return msg.includes('detached frame') ||
+         msg.includes('execution context was destroyed') ||
+         msg.includes('target closed') ||
+         msg.includes('session closed');
+}
+
+let restartInProgress = false;
+
+async function restartDueToDetachedFrame() {
+  if (restartInProgress) {
+    console.log('[RECOVER] Restart already in progress — skipping.');
+    return;
+  }
+  restartInProgress = true;
+  clientReady = false;
+  connectionStatus = 'disconnected';
+  readyHandled = false;
+
+  console.error('[RECOVER] ⚠️  Detached frame detected — forcing client restart...');
+  fireHAEvent('whatsapp_status', { status: 'disconnected', reason: 'detached_frame', timestamp: Date.now() });
+
+  try {
+    await client.destroy();
+    console.log('[RECOVER] Client destroyed. Restarting in 15s...');
+  } catch (e) {
+    console.error('[RECOVER] destroy() error (ignored):', e.message);
+  }
+
+  await delay(15000);
+  restartInProgress = false;
+
+  try {
+    await startClient();
+    console.log('[RECOVER] ✅ Client restarted successfully.');
+  } catch (err) {
+    console.error('[RECOVER] ❌ Restart failed:', err.message);
+    setTimeout(() => startClient().catch(e => console.error('[RECOVER] Retry failed:', e.message)), 60000);
+  }
+}
+
+// Periodic health check — if client thinks it's connected but the frame is dead,
+// a simple getState() call will throw. Catches silent failures before they accumulate.
+setInterval(async () => {
+  if (!clientReady) return;
+  try {
+    await client.getState();
+  } catch (err) {
+    if (isDetachedFrameError(err)) {
+      console.error('[HEALTH] ❌ Health check caught detached frame:', err.message);
+      restartDueToDetachedFrame();
+    }
+  }
+}, 5 * 60 * 1000); // every 5 minutes
+
+// ────────────────────────────────────────────────────────────
 // MESSAGE LISTENERS — fire HA events for each message
 // ────────────────────────────────────────────────────────────
 
@@ -521,6 +580,12 @@ async function handleCommand(eventType, eventData) {
       success: false,
       error: err.message
     });
+
+    // Detached frame = Puppeteer browser died silently — trigger a full restart
+    if (isDetachedFrameError(err)) {
+      console.error('[CMD] Detached frame error detected — scheduling client restart.');
+      restartDueToDetachedFrame();
+    }
   }
 }
 
