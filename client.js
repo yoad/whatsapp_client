@@ -465,11 +465,18 @@ async function handleCommand(eventType, eventData) {
     switch (eventType) {
       case 'whatsapp_command_send': {
         if (!clientReady) throw new Error('WhatsApp not connected');
-        const { target_id, message } = eventData;
+        const { target_id, message, quoted_message_id } = eventData;
         if (!target_id || !message) throw new Error('target_id and message are required');
 
         const chat = await retry(() => client.getChatById(target_id), `send-${target_id}`);
-        await chat.sendMessage(message);
+
+        const sendOptions = {};
+        if (quoted_message_id) {
+          sendOptions.quotedMessageId = quoted_message_id;
+          console.log(`[CMD] Sending as reply to ${quoted_message_id}`);
+        }
+
+        await chat.sendMessage(message, sendOptions);
         console.log(`[CMD] Message sent to ${target_id}`);
 
         fireHAEvent('whatsapp_response', {
