@@ -64,7 +64,6 @@ const COMMAND_DELAY_MS = 3000; // 3s between commands
 const COMMAND_TIMEOUT_MS = 60000; // 60s max per command execution
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const WS_RECONNECT_DELAY_MS = 5000;
-const RESTART_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const MIGRATION_FLAG = '/data/.migrated_v134';
 
 let options = {};
@@ -104,15 +103,6 @@ function pushRecentMessage(sender, body, timestamp) {
 // HELPERS
 // ────────────────────────────────────────────────────────────
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`Command timed out after ${ms / 1000}s`)), ms)
-    )
-  ]);
-}
 
 async function retry(fn, label, maxRetries = 3, delayMs = 15000) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -155,7 +145,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: '/data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-    protocolTimeout: 600000,
+    protocolTimeout: 300000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -202,11 +192,6 @@ client.on('auth_failure', (msg) => {
 
 client.on('loading_screen', (percent, message) => {
   console.log(`[Loading] ${percent}% — ${message}`);
-  if (clientReady) {
-    console.log('[Loading] WhatsApp Web is reloading — pausing commands until reconnected.');
-    clientReady = false;
-    connectionStatus = 'reconnecting';
-  }
 });
 
 // --- Ready ---
@@ -343,18 +328,6 @@ async function handleCommand(eventType, eventData) {
   const requestId = eventData.request_id || `auto-${Date.now()}`;
   const appId = eventData.app_id || 'unknown';
 
-  // Reject new commands during restart drain
-  if (restartScheduled) {
-    console.log(`[CMD] ⏰ Rejected ${eventType} from [${appId}] — restart in progress`);
-    fireHAEvent('whatsapp_response', {
-      request_id: requestId,
-      command: eventType.replace('whatsapp_command_', ''),
-      success: false,
-      error: 'Client is restarting, retry in ~60 seconds'
-    });
-    return;
-  }
-
   // Add to the app's sub-queue
   if (!appQueues.has(appId)) {
     appQueues.set(appId, []);
@@ -391,97 +364,93 @@ async function processCommandQueue() {
   console.log(`[CMD] Processing ${eventType} from [${appId}] (${requestId})... [${getTotalQueueLength()} remaining]`);
 
   try {
-    const executeCommand = async () => {
-      switch (eventType) {
-        case 'whatsapp_command_send': {
-          if (!clientReady) throw new Error('WhatsApp not connected');
-          const { target_id, message, quoted_message_id } = eventData;
-          if (!target_id || !message) throw new Error('target_id and message required');
+    switch (eventType) {
+      case 'whatsapp_command_send': {
+        if (!clientReady) throw new Error('WhatsApp not connected');
+        const { target_id, message, quoted_message_id } = eventData;
+        if (!target_id || !message) throw new Error('target_id and message required');
 
-          const chat = await retry(() => client.getChatById(target_id), `send-${target_id}`);
-          const sendOptions = {};
-          if (quoted_message_id) {
-            sendOptions.quotedMessageId = quoted_message_id;
-          }
-          await chat.sendMessage(message, sendOptions);
-          console.log(`[CMD] ✅ Message sent to ${target_id}`);
-
-          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'send', success: true });
-          break;
+        const chat = await retry(() => client.getChatById(target_id), `send-${target_id}`);
+        const sendOptions = {};
+        if (quoted_message_id) {
+          sendOptions.quotedMessageId = quoted_message_id;
         }
+        await chat.sendMessage(message, sendOptions);
+        console.log(`[CMD] ✅ Message sent to ${target_id}`);
 
-        case 'whatsapp_command_fetch': {
-          if (!clientReady) throw new Error('WhatsApp not connected');
-          const { group_id, limit = 50 } = eventData;
-          if (!group_id) throw new Error('group_id required');
-
-          const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
-          const messages = await chat.fetchMessages({ limit: Math.min(limit, 200) });
-
-          const msgData = messages.map(m => ({
-            body: m.body || '',
-            timestamp: m.timestamp,
-            sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
-            message_id: m.id && m.id._serialized ? m.id._serialized : null,
-            from_me: m.fromMe || false
-          }));
-
-          console.log(`[CMD] ✅ Fetched ${msgData.length} messages from ${group_id}`);
-          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'fetch', success: true, data: msgData });
-          break;
-        }
-
-        case 'whatsapp_command_react': {
-          if (!clientReady) throw new Error('WhatsApp not connected');
-          const { message_id, chat_id, emoji } = eventData;
-          if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji required');
-
-          try {
-            const chat = await client.getChatById(chat_id);
-            const messages = await chat.fetchMessages({ limit: 50 });
-            const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
-
-            if (targetMsg) {
-              await targetMsg.react(emoji);
-              console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id}`);
-            } else {
-              console.log(`[CMD] ⚠️ React skipped — message not in recent 50`);
-            }
-          } catch (reactErr) {
-            console.log(`[CMD] React failed (non-fatal): ${reactErr.message}`);
-          }
-
-          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: true });
-          break;
-        }
-
-        case 'whatsapp_command_list_groups': {
-          if (!clientReady) throw new Error('WhatsApp not connected');
-
-          const chats = await client.getChats();
-          const groups = chats.filter(c => c.isGroup).map(c => ({ id: c.id._serialized, name: c.name }));
-
-          console.log(`[CMD] ✅ Listed ${groups.length} groups`);
-          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'list_groups', success: true, data: groups });
-          break;
-        }
-
-        case 'whatsapp_command_status': {
-          fireHAEvent('whatsapp_response', {
-            request_id: requestId,
-            command: 'status',
-            success: true,
-            data: { status: connectionStatus, client_ready: clientReady, last_heartbeat: lastHeartbeat, timestamp: Date.now() }
-          });
-          break;
-        }
-
-        default:
-          console.log(`[CMD] Unknown command: ${eventType}`);
+        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'send', success: true });
+        break;
       }
-    };
 
-    await withTimeout(executeCommand(), COMMAND_TIMEOUT_MS, eventType);
+      case 'whatsapp_command_fetch': {
+        if (!clientReady) throw new Error('WhatsApp not connected');
+        const { group_id, limit = 50 } = eventData;
+        if (!group_id) throw new Error('group_id required');
+
+        const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
+        const messages = await chat.fetchMessages({ limit: Math.min(limit, 200) });
+
+        const msgData = messages.map(m => ({
+          body: m.body || '',
+          timestamp: m.timestamp,
+          sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
+          message_id: m.id && m.id._serialized ? m.id._serialized : null,
+          from_me: m.fromMe || false
+        }));
+
+        console.log(`[CMD] ✅ Fetched ${msgData.length} messages from ${group_id}`);
+        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'fetch', success: true, data: msgData });
+        break;
+      }
+
+      case 'whatsapp_command_react': {
+        if (!clientReady) throw new Error('WhatsApp not connected');
+        const { message_id, chat_id, emoji } = eventData;
+        if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji required');
+
+        try {
+          const chat = await client.getChatById(chat_id);
+          const messages = await chat.fetchMessages({ limit: 50 });
+          const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
+
+          if (targetMsg) {
+            await targetMsg.react(emoji);
+            console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id}`);
+          } else {
+            console.log(`[CMD] ⚠️ React skipped — message not in recent 50`);
+          }
+        } catch (reactErr) {
+          console.log(`[CMD] React failed (non-fatal): ${reactErr.message}`);
+        }
+
+        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: true });
+        break;
+      }
+
+      case 'whatsapp_command_list_groups': {
+        if (!clientReady) throw new Error('WhatsApp not connected');
+
+        const chats = await client.getChats();
+        const groups = chats.filter(c => c.isGroup).map(c => ({ id: c.id._serialized, name: c.name }));
+
+        console.log(`[CMD] ✅ Listed ${groups.length} groups`);
+        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'list_groups', success: true, data: groups });
+        break;
+      }
+
+      case 'whatsapp_command_status': {
+        fireHAEvent('whatsapp_response', {
+          request_id: requestId,
+          command: 'status',
+          success: true,
+          data: { status: connectionStatus, client_ready: clientReady, last_heartbeat: lastHeartbeat, timestamp: Date.now() }
+        });
+        break;
+      }
+
+      default:
+        console.log(`[CMD] Unknown command: ${eventType}`);
+    }
   } catch (err) {
     console.error(`[CMD] ❌ Error ${eventType}: ${err.message}`);
     fireHAEvent('whatsapp_response', {
@@ -586,39 +555,6 @@ setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS);
 
 // ────────────────────────────────────────────────────────────
-// SCHEDULED RESTART — restart every 12 hours for stability
-// ────────────────────────────────────────────────────────────
-let restartScheduled = false;
-
-function scheduleRestart() {
-  setTimeout(() => {
-    restartScheduled = true;
-    const uptime = Math.round(RESTART_INTERVAL_MS / 1000 / 60 / 60);
-    console.log(`[RESTART] ⏰ ${uptime}h uptime reached — scheduling graceful restart...`);
-
-    // Wait for the current command to finish, then exit
-    const waitForDrain = setInterval(() => {
-      if (!processingCommand && getTotalQueueLength() === 0) {
-        clearInterval(waitForDrain);
-        console.log('[RESTART] ✅ Queue drained — exiting for supervisor restart.');
-        process.exit(0);
-      } else {
-        console.log(`[RESTART] Waiting for queue to drain... (${getTotalQueueLength()} remaining, processing: ${processingCommand})`);
-      }
-    }, 5000);
-
-    // Safety net: force exit after 2 minutes even if queue doesn't drain
-    setTimeout(() => {
-      console.log('[RESTART] ⚠️ Force exit after 2min drain timeout.');
-      process.exit(0);
-    }, 2 * 60 * 1000);
-  }, RESTART_INTERVAL_MS);
-
-  const restartAt = new Date(Date.now() + RESTART_INTERVAL_MS).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
-  console.log(`[RESTART] Next scheduled restart at ${restartAt}`);
-}
-
-// ────────────────────────────────────────────────────────────
 // INGRESS WEB UI
 // ────────────────────────────────────────────────────────────
 const app = express();
@@ -691,22 +627,11 @@ async function main() {
   // Connect to HA WebSocket for command events
   connectHAWebSocket();
 
-  // Schedule automatic restart for stability
-  scheduleRestart();
-
-  console.log('Initializing WhatsApp client (3min timeout)...');
-  const INIT_TIMEOUT_MS = 3 * 60 * 1000;
-  const initTimeout = setTimeout(() => {
-    console.error('❌ Init timed out after 3 minutes — exiting for supervisor restart.');
-    process.exit(1);
-  }, INIT_TIMEOUT_MS);
-
+  console.log('Initializing WhatsApp client...');
   try {
     await client.initialize();
-    clearTimeout(initTimeout);
     console.log('✅ Client initialized');
   } catch (err) {
-    clearTimeout(initTimeout);
     console.error('❌ Init failed:', err.message);
     console.error(err.stack);
     process.exit(1);
