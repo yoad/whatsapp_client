@@ -77,7 +77,6 @@ const MIGRATION_FLAG_NAME = options.MIGRATION_FLAG || '.migrated_v110';
 const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
-const CLEAR_SESSION = options.CLEAR_SESSION || false;
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -623,25 +622,6 @@ async function main() {
   console.log('║   v1.1.0 • Event-driven • Round-robin     ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
-
-  // Force-clear session if configured (fixes logout loops)
-  if (CLEAR_SESSION) {
-    console.log('[CLEAR_SESSION] Wiping all session data for fresh start...');
-    for (const dir of ['/data/.wwebjs_auth', '/data/session']) {
-      try {
-        if (fs.existsSync(dir)) {
-          fs.rmSync(dir, { recursive: true, force: true });
-          console.log(`[CLEAR_SESSION] Deleted: ${dir}`);
-        }
-      } catch (err) {
-        console.error(`[CLEAR_SESSION] Failed to delete ${dir}: ${err.message}`);
-      }
-    }
-    // Remove migration flag so it doesn't interfere
-    try { fs.unlinkSync(MIGRATION_FLAG); } catch { }
-    console.log('[CLEAR_SESSION] Done — will prompt for fresh QR scan.');
-    console.log('[CLEAR_SESSION] ⚠️  Remember to set CLEAR_SESSION back to false!');
-  }
 
   clearOldSession();
   cleanupChromium();

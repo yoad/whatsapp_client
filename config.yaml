@@ -16,9 +16,7 @@ panel_title: "WhatsApp"
 host_network: true
 options:
   TEST_MESSAGE: true
-  CLEAR_SESSION: false
   MIGRATION_FLAG: ".migrated_v110"
 schema:
   TEST_MESSAGE: bool
-  CLEAR_SESSION: bool
   MIGRATION_FLAG: str
