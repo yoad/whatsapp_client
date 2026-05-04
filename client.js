@@ -63,6 +63,7 @@ const INGRESS_PORT = 3001;
 const COMMAND_DELAY_MS = 5000; // 5s between commands for stability
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const WS_RECONNECT_DELAY_MS = 5000;
+const RESTART_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const MIGRATION_FLAG = '/data/.migrated_v134';
 
 let options = {};
@@ -144,7 +145,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: '/data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-    protocolTimeout: 300000,
+    protocolTimeout: 600000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -326,6 +327,18 @@ function getTotalQueueLength() {
 async function handleCommand(eventType, eventData) {
   const requestId = eventData.request_id || `auto-${Date.now()}`;
   const appId = eventData.app_id || 'unknown';
+
+  // Reject new commands during restart drain
+  if (restartScheduled) {
+    console.log(`[CMD] ⏰ Rejected ${eventType} from [${appId}] — restart in progress`);
+    fireHAEvent('whatsapp_response', {
+      request_id: requestId,
+      command: eventType.replace('whatsapp_command_', ''),
+      success: false,
+      error: 'Client is restarting, retry in ~60 seconds'
+    });
+    return;
+  }
 
   // Add to the app's sub-queue
   if (!appQueues.has(appId)) {
@@ -554,6 +567,39 @@ setInterval(() => {
 }, HEARTBEAT_INTERVAL_MS);
 
 // ────────────────────────────────────────────────────────────
+// SCHEDULED RESTART — restart every 12 hours for stability
+// ────────────────────────────────────────────────────────────
+let restartScheduled = false;
+
+function scheduleRestart() {
+  setTimeout(() => {
+    restartScheduled = true;
+    const uptime = Math.round(RESTART_INTERVAL_MS / 1000 / 60 / 60);
+    console.log(`[RESTART] ⏰ ${uptime}h uptime reached — scheduling graceful restart...`);
+
+    // Wait for the current command to finish, then exit
+    const waitForDrain = setInterval(() => {
+      if (!processingCommand && getTotalQueueLength() === 0) {
+        clearInterval(waitForDrain);
+        console.log('[RESTART] ✅ Queue drained — exiting for supervisor restart.');
+        process.exit(0);
+      } else {
+        console.log(`[RESTART] Waiting for queue to drain... (${getTotalQueueLength()} remaining, processing: ${processingCommand})`);
+      }
+    }, 5000);
+
+    // Safety net: force exit after 2 minutes even if queue doesn't drain
+    setTimeout(() => {
+      console.log('[RESTART] ⚠️ Force exit after 2min drain timeout.');
+      process.exit(0);
+    }, 2 * 60 * 1000);
+  }, RESTART_INTERVAL_MS);
+
+  const restartAt = new Date(Date.now() + RESTART_INTERVAL_MS).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
+  console.log(`[RESTART] Next scheduled restart at ${restartAt}`);
+}
+
+// ────────────────────────────────────────────────────────────
 // INGRESS WEB UI
 // ────────────────────────────────────────────────────────────
 const app = express();
@@ -625,6 +671,9 @@ async function main() {
 
   // Connect to HA WebSocket for command events
   connectHAWebSocket();
+
+  // Schedule automatic restart for stability
+  scheduleRestart();
 
   console.log('Initializing WhatsApp client...');
   try {
