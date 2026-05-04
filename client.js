@@ -694,11 +694,19 @@ async function main() {
   // Schedule automatic restart for stability
   scheduleRestart();
 
-  console.log('Initializing WhatsApp client...');
+  console.log('Initializing WhatsApp client (3min timeout)...');
+  const INIT_TIMEOUT_MS = 3 * 60 * 1000;
+  const initTimeout = setTimeout(() => {
+    console.error('❌ Init timed out after 3 minutes — exiting for supervisor restart.');
+    process.exit(1);
+  }, INIT_TIMEOUT_MS);
+
   try {
     await client.initialize();
+    clearTimeout(initTimeout);
     console.log('✅ Client initialized');
   } catch (err) {
+    clearTimeout(initTimeout);
     console.error('❌ Init failed:', err.message);
     console.error(err.stack);
     process.exit(1);
