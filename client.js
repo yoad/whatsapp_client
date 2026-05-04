@@ -64,8 +64,6 @@ const COMMAND_DELAY_MS = 3000; // 3s between commands
 const COMMAND_TIMEOUT_MS = 60000; // 60s max per command execution
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const WS_RECONNECT_DELAY_MS = 5000;
-const MIGRATION_FLAG = '/data/.migrated_v134';
-
 let options = {};
 try {
   options = JSON.parse(fs.readFileSync('/data/options.json', 'utf8'));
@@ -73,6 +71,10 @@ try {
 } catch (_) {
   console.log('No options.json, using defaults.');
 }
+
+const RESTART_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const MIGRATION_FLAG_NAME = options.MIGRATION_FLAG || '.migrated_v110';
+const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
 const CLEAR_SESSION = options.CLEAR_SESSION || false;
