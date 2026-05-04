@@ -192,6 +192,11 @@ client.on('auth_failure', (msg) => {
 
 client.on('loading_screen', (percent, message) => {
   console.log(`[Loading] ${percent}% — ${message}`);
+  if (clientReady) {
+    console.log('[Loading] WhatsApp Web is reloading — pausing commands until reconnected.');
+    clientReady = false;
+    connectionStatus = 'reconnecting';
+  }
 });
 
 // --- Ready ---
