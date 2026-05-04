@@ -60,7 +60,8 @@ process.on('uncaughtException', (err) => {
 // ────────────────────────────────────────────────────────────
 const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
 const INGRESS_PORT = 3001;
-const COMMAND_DELAY_MS = 5000; // 5s between commands for stability
+const COMMAND_DELAY_MS = 3000; // 3s between commands
+const COMMAND_TIMEOUT_MS = 60000; // 60s max per command execution
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const WS_RECONNECT_DELAY_MS = 5000;
 const RESTART_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
@@ -103,6 +104,15 @@ function pushRecentMessage(sender, body, timestamp) {
 // HELPERS
 // ────────────────────────────────────────────────────────────
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Command timed out after ${ms / 1000}s`)), ms)
+    )
+  ]);
+}
 
 async function retry(fn, label, maxRetries = 3, delayMs = 15000) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -381,93 +391,97 @@ async function processCommandQueue() {
   console.log(`[CMD] Processing ${eventType} from [${appId}] (${requestId})... [${getTotalQueueLength()} remaining]`);
 
   try {
-    switch (eventType) {
-      case 'whatsapp_command_send': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
-        const { target_id, message, quoted_message_id } = eventData;
-        if (!target_id || !message) throw new Error('target_id and message required');
+    const executeCommand = async () => {
+      switch (eventType) {
+        case 'whatsapp_command_send': {
+          if (!clientReady) throw new Error('WhatsApp not connected');
+          const { target_id, message, quoted_message_id } = eventData;
+          if (!target_id || !message) throw new Error('target_id and message required');
 
-        const chat = await retry(() => client.getChatById(target_id), `send-${target_id}`);
-        const sendOptions = {};
-        if (quoted_message_id) {
-          sendOptions.quotedMessageId = quoted_message_id;
-        }
-        await chat.sendMessage(message, sendOptions);
-        console.log(`[CMD] ✅ Message sent to ${target_id}`);
-
-        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'send', success: true });
-        break;
-      }
-
-      case 'whatsapp_command_fetch': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
-        const { group_id, limit = 50 } = eventData;
-        if (!group_id) throw new Error('group_id required');
-
-        const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
-        const messages = await chat.fetchMessages({ limit: Math.min(limit, 200) });
-
-        const msgData = messages.map(m => ({
-          body: m.body || '',
-          timestamp: m.timestamp,
-          sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
-          message_id: m.id && m.id._serialized ? m.id._serialized : null,
-          from_me: m.fromMe || false
-        }));
-
-        console.log(`[CMD] ✅ Fetched ${msgData.length} messages from ${group_id}`);
-        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'fetch', success: true, data: msgData });
-        break;
-      }
-
-      case 'whatsapp_command_react': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
-        const { message_id, chat_id, emoji } = eventData;
-        if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji required');
-
-        try {
-          const chat = await client.getChatById(chat_id);
-          const messages = await chat.fetchMessages({ limit: 50 });
-          const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
-
-          if (targetMsg) {
-            await targetMsg.react(emoji);
-            console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id}`);
-          } else {
-            console.log(`[CMD] ⚠️ React skipped — message not in recent 50`);
+          const chat = await retry(() => client.getChatById(target_id), `send-${target_id}`);
+          const sendOptions = {};
+          if (quoted_message_id) {
+            sendOptions.quotedMessageId = quoted_message_id;
           }
-        } catch (reactErr) {
-          console.log(`[CMD] React failed (non-fatal): ${reactErr.message}`);
+          await chat.sendMessage(message, sendOptions);
+          console.log(`[CMD] ✅ Message sent to ${target_id}`);
+
+          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'send', success: true });
+          break;
         }
 
-        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: true });
-        break;
+        case 'whatsapp_command_fetch': {
+          if (!clientReady) throw new Error('WhatsApp not connected');
+          const { group_id, limit = 50 } = eventData;
+          if (!group_id) throw new Error('group_id required');
+
+          const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
+          const messages = await chat.fetchMessages({ limit: Math.min(limit, 200) });
+
+          const msgData = messages.map(m => ({
+            body: m.body || '',
+            timestamp: m.timestamp,
+            sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
+            message_id: m.id && m.id._serialized ? m.id._serialized : null,
+            from_me: m.fromMe || false
+          }));
+
+          console.log(`[CMD] ✅ Fetched ${msgData.length} messages from ${group_id}`);
+          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'fetch', success: true, data: msgData });
+          break;
+        }
+
+        case 'whatsapp_command_react': {
+          if (!clientReady) throw new Error('WhatsApp not connected');
+          const { message_id, chat_id, emoji } = eventData;
+          if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji required');
+
+          try {
+            const chat = await client.getChatById(chat_id);
+            const messages = await chat.fetchMessages({ limit: 50 });
+            const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
+
+            if (targetMsg) {
+              await targetMsg.react(emoji);
+              console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id}`);
+            } else {
+              console.log(`[CMD] ⚠️ React skipped — message not in recent 50`);
+            }
+          } catch (reactErr) {
+            console.log(`[CMD] React failed (non-fatal): ${reactErr.message}`);
+          }
+
+          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: true });
+          break;
+        }
+
+        case 'whatsapp_command_list_groups': {
+          if (!clientReady) throw new Error('WhatsApp not connected');
+
+          const chats = await client.getChats();
+          const groups = chats.filter(c => c.isGroup).map(c => ({ id: c.id._serialized, name: c.name }));
+
+          console.log(`[CMD] ✅ Listed ${groups.length} groups`);
+          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'list_groups', success: true, data: groups });
+          break;
+        }
+
+        case 'whatsapp_command_status': {
+          fireHAEvent('whatsapp_response', {
+            request_id: requestId,
+            command: 'status',
+            success: true,
+            data: { status: connectionStatus, client_ready: clientReady, last_heartbeat: lastHeartbeat, timestamp: Date.now() }
+          });
+          break;
+        }
+
+        default:
+          console.log(`[CMD] Unknown command: ${eventType}`);
       }
+    };
 
-      case 'whatsapp_command_list_groups': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
-
-        const chats = await client.getChats();
-        const groups = chats.filter(c => c.isGroup).map(c => ({ id: c.id._serialized, name: c.name }));
-
-        console.log(`[CMD] ✅ Listed ${groups.length} groups`);
-        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'list_groups', success: true, data: groups });
-        break;
-      }
-
-      case 'whatsapp_command_status': {
-        fireHAEvent('whatsapp_response', {
-          request_id: requestId,
-          command: 'status',
-          success: true,
-          data: { status: connectionStatus, client_ready: clientReady, last_heartbeat: lastHeartbeat, timestamp: Date.now() }
-        });
-        break;
-      }
-
-      default:
-        console.log(`[CMD] Unknown command: ${eventType}`);
-    }
+    await withTimeout(executeCommand(), COMMAND_TIMEOUT_MS, eventType);
   } catch (err) {
     console.error(`[CMD] ❌ Error ${eventType}: ${err.message}`);
     fireHAEvent('whatsapp_response', {
