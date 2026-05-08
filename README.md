@@ -28,6 +28,7 @@ The QR code is also printed to the add-on's terminal logs.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `TEST_MESSAGE` | `bool` | `true` | Send a test message to self on successful connection |
+| `RESTART_HOURS` | `int` | `7` | Restart the add-on every X hours to keep WhatsApp Web stable. Set to `0` to disable |
 
 ## HA Events
 
@@ -114,6 +115,10 @@ WhatsApp Web occasionally navigates internally, which destroys the Puppeteer exe
 
 If a navigation error occurs during initialization (before connection), the process exits and the HA Supervisor restarts it automatically.
 
+### Periodic Restart
+
+WhatsApp Web's Puppeteer session can degrade over long uptimes (memory leaks, stale contexts). The client schedules an automatic restart after `RESTART_HOURS` hours (default: 7). When triggered, a full status snapshot is logged (uptime, connection status, connected number, heartbeat count, queue depth) and the process exits so the HA Supervisor brings it back up cleanly. Set `RESTART_HOURS` to `0` in the add-on configuration to disable this behaviour.
+
 ### Session Migration
 
 On first run after upgrading from an older library version, the client automatically detects and clears incompatible session data (flagged by `/data/.migrated_v134`).
@@ -135,6 +140,10 @@ All persistent data is stored in `/data/`:
 | `GET` | `/api/status` | Connection status, QR data URL, queue lengths, recent messages |
 
 ## Changelog
+
+### v1.1.003
+- Added configurable periodic restart (`RESTART_HOURS`, default 7h, `0` to disable)
+- Full status snapshot logged on scheduled restart
 
 ### v0.1.0
 - Upgraded `whatsapp-web.js` from v1.23.0 to v1.34.7

@@ -72,7 +72,8 @@ try {
   console.log('No options.json, using defaults.');
 }
 
-const RESTART_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const RESTART_HOURS = options.RESTART_HOURS !== undefined ? Number(options.RESTART_HOURS) : 7;
+const RESTART_INTERVAL_MS = RESTART_HOURS > 0 ? RESTART_HOURS * 60 * 60 * 1000 : 0;
 const MIGRATION_FLAG_NAME = options.MIGRATION_FLAG || '.migrated_v110';
 const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
@@ -637,6 +638,29 @@ async function main() {
     console.error('❌ Init failed:', err.message);
     console.error(err.stack);
     process.exit(1);
+  }
+
+  // Schedule periodic restart (supervisor will bring us back)
+  if (RESTART_INTERVAL_MS > 0) {
+    console.log(`[RESTART] Scheduled automatic restart in ${RESTART_HOURS} hour(s)`);
+    setTimeout(() => {
+      const uptimeMin = Math.round(RESTART_INTERVAL_MS / 60000);
+      const connectedNumber = (clientReady && client.info && client.info.wid) ? client.info.wid.user : 'N/A';
+      console.log('');
+      console.log('╔══════════════════════════════════════════╗');
+      console.log('║   🔄 SCHEDULED RESTART                    ║');
+      console.log('╚══════════════════════════════════════════╝');
+      console.log(`[RESTART] Uptime: ${uptimeMin} minutes (${RESTART_HOURS}h)`);
+      console.log(`[RESTART] Status: ${connectionStatus}`);
+      console.log(`[RESTART] Connected number: ${connectedNumber}`);
+      console.log(`[RESTART] Heartbeats sent: ${heartbeatCount}`);
+      console.log(`[RESTART] Command queue depth: ${getTotalQueueLength()}`);
+      console.log(`[RESTART] Exiting now — supervisor will restart...`);
+      console.log('');
+      process.exit(1);
+    }, RESTART_INTERVAL_MS);
+  } else {
+    console.log('[RESTART] Periodic restart is disabled (RESTART_HOURS=0)');
   }
 }
 
