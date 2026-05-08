@@ -393,13 +393,24 @@ async function processCommandQueue() {
         const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
         const messages = await chat.fetchMessages({ limit: Math.min(limit, 200) });
 
-        const msgData = messages.map(m => ({
-          body: m.body || '',
-          timestamp: m.timestamp,
-          sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
-          message_id: m.id && m.id._serialized ? m.id._serialized : null,
-          from_me: m.fromMe || false
-        }));
+        const msgData = messages.map(m => {
+          // Extract reactions if available
+          let reactions = [];
+          try {
+            if (m._data && m._data.reactions && Array.isArray(m._data.reactions)) {
+              reactions = m._data.reactions.map(r => r.id || r.emoji || r).filter(Boolean);
+            }
+          } catch (_) {}
+
+          return {
+            body: m.body || '',
+            timestamp: m.timestamp,
+            sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
+            message_id: m.id && m.id._serialized ? m.id._serialized : null,
+            from_me: m.fromMe || false,
+            reactions
+          };
+        });
 
         console.log(`[CMD] ✅ Fetched ${msgData.length} messages from ${group_id}`);
         fireHAEvent('whatsapp_response', { request_id: requestId, command: 'fetch', success: true, data: msgData });
