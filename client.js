@@ -78,6 +78,7 @@ const MIGRATION_FLAG_NAME = options.MIGRATION_FLAG || '.migrated_v110';
 const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
+const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -203,7 +204,7 @@ client.on('ready', async () => {
   connectionStatus = 'connected';
   currentQRDataUrl = null;
 
-  const me = client.info.wid.user;
+  const me = CONNECTED_NUMBER || client.info.wid.user;
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log(`║   ✅ CONNECTED as ${me}            ║`);
@@ -215,7 +216,7 @@ client.on('ready', async () => {
   // Send test message to self
   if (TEST_MESSAGE) {
     try {
-      const testId = me + '@c.us';
+      const testId = client.info.wid.user + '@c.us';
       await client.sendMessage(testId, '✅ WhatsApp Client connected successfully!');
       console.log(`[TEST] ✅ Test message sent to self (${me})`);
     } catch (err) {
@@ -578,7 +579,7 @@ app.get('/api/status', (req, res) => {
   let connectedNumber = null;
   try {
     if (clientReady && client.info && client.info.wid) {
-      connectedNumber = client.info.wid.user;
+      connectedNumber = CONNECTED_NUMBER || client.info.wid.user;
     }
   } catch (_) {}
 
@@ -656,7 +657,7 @@ async function main() {
     console.log(`[RESTART] Scheduled automatic restart in ${RESTART_HOURS} hour(s)`);
     setTimeout(() => {
       const uptimeMin = Math.round(RESTART_INTERVAL_MS / 60000);
-      const connectedNumber = (clientReady && client.info && client.info.wid) ? client.info.wid.user : 'N/A';
+      const connectedNumber = CONNECTED_NUMBER || ((clientReady && client.info && client.info.wid) ? client.info.wid.user : 'N/A');
       console.log('');
       console.log('╔══════════════════════════════════════════╗');
       console.log('║   🔄 SCHEDULED RESTART                    ║');

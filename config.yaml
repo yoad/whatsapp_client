@@ -15,10 +15,12 @@ panel_icon: "mdi:whatsapp"
 panel_title: "WhatsApp"
 host_network: true
 options:
+  CONNECTED_NUMBER: "972525628289"
   TEST_MESSAGE: true
   MIGRATION_FLAG: ".migrated_v110"
   RESTART_HOURS: 7
 schema:
+  CONNECTED_NUMBER: str
   TEST_MESSAGE: bool
   MIGRATION_FLAG: str
   RESTART_HOURS: "int(0,)"
