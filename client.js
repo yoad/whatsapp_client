@@ -216,7 +216,7 @@ client.on('ready', async () => {
   // Send test message to self
   if (TEST_MESSAGE) {
     try {
-      const testId = client.info.wid.user + '@c.us';
+      const testId = (CONNECTED_NUMBER || client.info.wid.user) + '@c.us';
       await client.sendMessage(testId, '✅ WhatsApp Client connected successfully!');
       console.log(`[TEST] ✅ Test message sent to self (${me})`);
     } catch (err) {
