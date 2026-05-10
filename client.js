@@ -78,7 +78,7 @@ const MIGRATION_FLAG_NAME = options.MIGRATION_FLAG || '.migrated_v110';
 const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
-const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
+const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '972525628289';
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
