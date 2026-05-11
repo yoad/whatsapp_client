@@ -613,19 +613,33 @@ function cleanupChromium() {
 function clearOldSession() {
   if (fs.existsSync(MIGRATION_FLAG)) return;
 
-  console.log('[Migration] First run on v1.34 — clearing old session data...');
+  console.log('[RESET] New migration flag detected — performing hard reset...');
+
+  // Remove old migration flag files
+  try {
+    const dataFiles = fs.readdirSync('/data');
+    for (const f of dataFiles) {
+      if (f.startsWith('.migrated_')) {
+        const p = `/data/${f}`;
+        try { fs.unlinkSync(p); console.log(`[RESET] Removed old flag: ${p}`); } catch {}
+      }
+    }
+  } catch {}
+
+  // Remove all session/auth data
   for (const dir of ['/data/.wwebjs_auth', '/data/session']) {
     try {
       if (fs.existsSync(dir)) {
         fs.rmSync(dir, { recursive: true, force: true });
-        console.log(`[Migration] Cleared: ${dir}`);
+        console.log(`[RESET] Cleared: ${dir}`);
       }
     } catch (err) {
-      console.error(`[Migration] Failed to clear ${dir}: ${err.message}`);
+      console.error(`[RESET] Failed to clear ${dir}: ${err.message}`);
     }
   }
+
   try { fs.writeFileSync(MIGRATION_FLAG, new Date().toISOString()); } catch {}
-  console.log('[Migration] Done — will prompt for fresh QR scan.');
+  console.log('[RESET] Done — will prompt for fresh QR scan.');
 }
 
 async function main() {
