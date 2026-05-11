@@ -84,6 +84,13 @@ if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
 }
 
+console.log('[CONFIG] CONNECTED_NUMBER:', CONNECTED_NUMBER);
+console.log('[CONFIG] RESTART_HOURS:', RESTART_HOURS);
+console.log('[CONFIG] TEST_MESSAGE:', TEST_MESSAGE);
+console.log('[CONFIG] MIGRATION_FLAG:', MIGRATION_FLAG_NAME);
+console.log('[CONFIG] Node.js:', process.version);
+console.log('[CONFIG] Platform:', process.platform, process.arch);
+
 // ────────────────────────────────────────────────────────────
 // STATE
 // ────────────────────────────────────────────────────────────
@@ -683,11 +690,16 @@ async function main() {
   connectHAWebSocket();
 
   console.log('Initializing WhatsApp client...');
+  console.log('[INIT] webVersionCache: remote (pinned version)');
+  console.log('[INIT] authStrategy: LocalAuth (/data)');
+  const initStart = Date.now();
   try {
     await client.initialize();
-    console.log('✅ Client initialized');
+    const initMs = Date.now() - initStart;
+    console.log(`✅ Client initialized (took ${Math.round(initMs / 1000)}s)`);
   } catch (err) {
-    console.error('❌ Init failed:', err.message);
+    const initMs = Date.now() - initStart;
+    console.error(`❌ Init failed after ${Math.round(initMs / 1000)}s: ${err.message}`);
     console.error(err.stack);
     process.exit(1);
   }
