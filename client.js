@@ -36,6 +36,7 @@ process.on('unhandledRejection', (reason) => {
       return;
     }
     console.error('[FATAL] Library crash during init — exiting for supervisor restart.');
+    console.error(reason);
     setTimeout(() => process.exit(1), 3000);
     return;
   }
@@ -49,6 +50,7 @@ process.on('uncaughtException', (err) => {
       return;
     }
     console.error('[FATAL] Library crash during init — exiting for supervisor restart.');
+    console.error(err);
     setTimeout(() => process.exit(1), 3000);
     return;
   }
