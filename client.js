@@ -147,6 +147,10 @@ async function fireHAEvent(eventType, eventData) {
 // ────────────────────────────────────────────────────────────
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: '/data' }),
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/AnasMuhammedAK/wa-version/main/html/2.3000.1017498659-alpha.html',
+  },
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
     protocolTimeout: 300000,
