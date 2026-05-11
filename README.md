@@ -2,7 +2,7 @@
 
 A WhatsApp Web client that runs as a Home Assistant add-on. Bridges WhatsApp messaging to HA via events and accepts commands from other add-ons through a round-robin command queue.
 
-Built on [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) v1.34.7.
+Built on [whatsapp-web.js](https://github.com/wwebjs/whatsapp-web.js) (installed from GitHub `main` branch for latest fixes).
 
 ## Features
 
@@ -14,6 +14,7 @@ Built on [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) v1.34
 - **Navigation error recovery** — Gracefully handles WhatsApp Web's internal page navigations without crashing
 - **Heartbeat monitoring** — Periodic status events every 2 minutes
 - **Ingress web UI** — Status dashboard accessible from the HA sidebar
+- **Web version pinning** — Uses `webVersionCache` to pin a compatible WhatsApp Web version, preventing connection failures
 
 ## Authentication
 
@@ -27,8 +28,20 @@ The QR code is also printed to the add-on's terminal logs.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
+| `CONNECTED_NUMBER` | `str` | `972525628289` | The phone number of the connected WhatsApp account, used for display in logs and test messages |
 | `TEST_MESSAGE` | `bool` | `true` | Send a test message to self on successful connection |
 | `RESTART_HOURS` | `int` | `7` | Restart the add-on every X hours to keep WhatsApp Web stable. Set to `0` to disable |
+| `MIGRATION_FLAG` | `str` | `.migrated_v121_webcache` | Internal migration flag. **Change this value to force a hard reset** — clears all session data, removes old flags, and prompts for a fresh QR scan |
+
+### Hard Reset
+
+To force a complete reset (clear all session data and re-scan QR):
+
+1. Go to the add-on configuration in HA
+2. Change `MIGRATION_FLAG` to any new value (e.g. `.migrated_v200`)
+3. Restart the add-on
+
+This will delete all old migration flags, clear `/data/.wwebjs_auth` and `/data/session`, and prompt for a fresh QR code scan.
 
 ## HA Events
 
@@ -89,20 +102,41 @@ Processing order: bot→notes→translate→bot→translate→bot (5s gaps)
 ┌──────────────────┐     HA Events      ┌──────────────────────┐
 │  WhatsApp Web    │ ───messages───────► │  Home Assistant       │
 │  (Puppeteer +    │                     │  Event Bus            │
-│   wwebjs 1.34.7) │ ◄──commands──────── │                      │
+│   wwebjs main)   │ ◄──commands──────── │                      │
 │                  │   (round-robin)     │  ┌─────────────────┐ │
 │  LocalAuth       │                     │  │ Kindergarten Bot │ │
 │  /data/          │                     │  │ (app_id: bot)    │ │
-└──────────────────┘                     │  ├─────────────────┤ │
-        │                                │  │ Personal Notes   │ │
-        ▼                                │  │ (app_id: notes)  │ │
-┌──────────────────┐                     │  ├─────────────────┤ │
-│  Ingress Web UI  │                     │  │ Translator       │ │
-│  :3001           │                     │  │ (app_id:translate)│ │
-│  - Status page   │                     │  └─────────────────┘ │
-│  - QR Code       │                     └──────────────────────┘
+│  webVersionCache │                     │  ├─────────────────┤ │
+│  (pinned ver.)   │                     │  │ Personal Notes   │ │
+└──────────────────┘                     │  │ (app_id: notes)  │ │
+        │                                │  ├─────────────────┤ │
+        ▼                                │  │ Translator       │ │
+┌──────────────────┐                     │  │ (app_id:translate)│ │
+│  Ingress Web UI  │                     │  └─────────────────┘ │
+│  :3001           │                     └──────────────────────┘
+│  - Status page   │
+│  - QR Code       │
 └──────────────────┘
 ```
+
+## Logging
+
+The client provides detailed logging for debugging connection issues:
+
+| Tag | Phase | Details |
+|---|---|---|
+| `[CONFIG]` | Startup | All settings, Node.js version, platform |
+| `[RESET]` | Startup | Migration flag changes, session data cleared |
+| `[INIT]` | Startup | webVersionCache type, authStrategy, initialization duration |
+| `[QR]` | Auth | QR code count and timestamps |
+| `[Loading]` | Auth | WhatsApp Web loading progress |
+| `[Auth]` | Auth | Authentication success or failure |
+| `[State]` | Runtime | WhatsApp state changes (CONNECTED, OPENING, PAIRING, etc.) |
+| `[DEBUG]` | Runtime | Full client info: WID, platform, pushname, phone details |
+| `[TEST]` | Runtime | Test message sent/failed |
+| `[Disconnected]` | Error | Disconnect reason, connection status, QR count, auth status |
+| `[FATAL]` | Error | Unhandled rejections and exceptions |
+| `[RESTART]` | Shutdown | Uptime, status, heartbeat count, queue depth |
 
 ## Error Recovery
 
@@ -110,7 +144,7 @@ Processing order: bot→notes→translate→bot→translate→bot (5s gaps)
 
 WhatsApp Web occasionally navigates internally, which destroys the Puppeteer execution context. This is handled at two levels:
 
-1. **Library level (v1.34.7)** — The `framenavigated` event triggers automatic re-injection of the client library
+1. **Library level** — The `framenavigated` event triggers automatic re-injection of the client library
 2. **App level** — If a navigation error occurs while the client is connected, it is logged as a non-fatal warning and the process continues running
 
 If a navigation error occurs during initialization (before connection), the process exits and the HA Supervisor restarts it automatically.
@@ -119,9 +153,15 @@ If a navigation error occurs during initialization (before connection), the proc
 
 WhatsApp Web's Puppeteer session can degrade over long uptimes (memory leaks, stale contexts). The client schedules an automatic restart after `RESTART_HOURS` hours (default: 7). When triggered, a full status snapshot is logged (uptime, connection status, connected number, heartbeat count, queue depth) and the process exits so the HA Supervisor brings it back up cleanly. Set `RESTART_HOURS` to `0` in the add-on configuration to disable this behaviour.
 
-### Session Migration
+### Session Migration / Hard Reset
 
-On first run after upgrading from an older library version, the client automatically detects and clears incompatible session data (flagged by `/data/.migrated_v134`).
+The `MIGRATION_FLAG` config option controls session cleanup. On startup, the client checks if the flag file exists in `/data/`. If not:
+
+1. All old `.migrated_*` flag files are deleted
+2. Session data (`/data/.wwebjs_auth`, `/data/session`) is cleared
+3. A new flag file is created
+
+This means changing the `MIGRATION_FLAG` value in the add-on config forces a full hard reset — useful when the session becomes corrupted or WhatsApp rejects the connection.
 
 ## Data Persistence
 
@@ -130,7 +170,7 @@ All persistent data is stored in `/data/`:
 | File | Purpose |
 |---|---|
 | `/data/.wwebjs_auth/` | WhatsApp session data (managed by `LocalAuth`) |
-| `/data/.migrated_v134` | Migration flag — prevents re-clearing session on restarts |
+| `/data/.migrated_*` | Migration flag — only one exists at a time |
 | `/data/options.json` | Add-on configuration (managed by HA) |
 
 ## API Endpoints
@@ -140,6 +180,14 @@ All persistent data is stored in `/data/`:
 | `GET` | `/api/status` | Connection status, QR data URL, queue lengths, recent messages |
 
 ## Changelog
+
+### v1.2.0
+- **`webVersionCache`** — Pin a compatible WhatsApp Web version via remote cache to prevent connection freezes
+- **`CONNECTED_NUMBER`** — Configurable phone number for display in logs, status API, and test messages (defaults to `972525628289`)
+- **Hard reset via `MIGRATION_FLAG`** — Change the flag value to force a full session wipe and fresh QR scan
+- **Enhanced logging** — Config summary, QR code count, state changes, client info dump, disconnect diagnostics, initialization timing
+- **Updated `whatsapp-web.js`** — Now installed from GitHub `main` branch (`wwebjs/whatsapp-web.js`) for latest fixes
+- Test message now sent to `CONNECTED_NUMBER` instead of internal WID/LID
 
 ### v1.1.003
 - Added configurable periodic restart (`RESTART_HOURS`, default 7h, `0` to disable)
