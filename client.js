@@ -163,12 +163,15 @@ const client = new Client({
 });
 
 // --- QR Code ---
+let qrCount = 0;
 client.on('qr', async (qr) => {
+  qrCount++;
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   SCAN THIS QR CODE WITH WHATSAPP        ║');
   console.log('╚══════════════════════════════════════════╝');
   qrcode.generate(qr, { small: true });
+  console.log(`[QR] Code #${qrCount} generated at ${new Date().toISOString()}`);
   console.log('');
 
   connectionStatus = 'qr_required';
@@ -198,6 +201,11 @@ client.on('loading_screen', (percent, message) => {
   console.log(`[Loading] ${percent}% — ${message}`);
 });
 
+// --- State Change ---
+client.on('change_state', (state) => {
+  console.log(`[State] WhatsApp state changed: ${state}`);
+});
+
 // --- Ready ---
 client.on('ready', async () => {
   clientReady = true;
@@ -210,6 +218,19 @@ client.on('ready', async () => {
   console.log(`║   ✅ CONNECTED as ${me}            ║`);
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
+
+  // Diagnostic info
+  try {
+    const info = client.info;
+    console.log(`[DEBUG] WID: ${info.wid._serialized}`);
+    console.log(`[DEBUG] Platform: ${info.platform}`);
+    console.log(`[DEBUG] Pushname: ${info.pushname}`);
+    if (info.phone) {
+      console.log(`[DEBUG] Phone: wa_version=${info.phone.wa_version}, os_version=${info.phone.os_version}, device_manufacturer=${info.phone.device_manufacturer}, device_model=${info.phone.device_model}`);
+    }
+  } catch (e) {
+    console.log(`[DEBUG] Could not read client.info: ${e.message}`);
+  }
 
   fireHAEvent('whatsapp_status', { status: 'connected', timestamp: Date.now() });
 
@@ -227,7 +248,8 @@ client.on('ready', async () => {
 
 // --- Disconnected ---
 client.on('disconnected', (reason) => {
-  console.error('[Disconnected]', reason);
+  const uptime = clientReady ? 'was connected' : 'never reached ready';
+  console.error(`[Disconnected] Reason: ${reason} | Status: ${uptime} | QR codes shown: ${qrCount} | Auth: ${authLogged}`);
   clientReady = false;
   connectionStatus = 'disconnected';
   fireHAEvent('whatsapp_status', { status: 'disconnected', reason, timestamp: Date.now() });
