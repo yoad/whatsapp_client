@@ -19,8 +19,10 @@ options:
   TEST_MESSAGE: true
   MIGRATION_FLAG: ".migrated_v122_wppconnect"
   RESTART_HOURS: 7
+  SAFE_MODE: true
 schema:
   CONNECTED_NUMBER: str
   TEST_MESSAGE: bool
   MIGRATION_FLAG: str
   RESTART_HOURS: "int(0,)"
+  SAFE_MODE: bool

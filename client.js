@@ -79,6 +79,7 @@ const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
 const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '972525628289';
+const SAFE_MODE = options.SAFE_MODE !== undefined ? options.SAFE_MODE : true;
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -88,6 +89,7 @@ console.log('[CONFIG] CONNECTED_NUMBER:', CONNECTED_NUMBER);
 console.log('[CONFIG] RESTART_HOURS:', RESTART_HOURS);
 console.log('[CONFIG] TEST_MESSAGE:', TEST_MESSAGE);
 console.log('[CONFIG] MIGRATION_FLAG:', MIGRATION_FLAG_NAME);
+console.log('[CONFIG] SAFE_MODE:', SAFE_MODE);
 console.log('[CONFIG] Node.js:', process.version);
 console.log('[CONFIG] Platform:', process.platform, process.arch);
 
@@ -132,6 +134,10 @@ async function retry(fn, label, maxRetries = 3, delayMs = 15000) {
 // ────────────────────────────────────────────────────────────
 async function fireHAEvent(eventType, eventData) {
   if (!SUPERVISOR_TOKEN) return;
+  if (SAFE_MODE) {
+    // console.log(`[SAFE MODE] Suppressed firing event: ${eventType}`);
+    return;
+  }
   try {
     await axios.post(
       `http://supervisor/core/api/events/${eventType}`,
@@ -687,7 +693,11 @@ async function main() {
   cleanupChromium();
 
   // Connect to HA WebSocket for command events
-  connectHAWebSocket();
+  if (!SAFE_MODE) {
+    connectHAWebSocket();
+  } else {
+    console.log('[SAFE MODE] Bypassing HA WebSocket connection.');
+  }
 
   console.log('Initializing WhatsApp client...');
   console.log('[INIT] webVersionCache: remote (pinned version)');
