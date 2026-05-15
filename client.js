@@ -81,7 +81,7 @@ const MIGRATION_FLAG = `/data/${MIGRATION_FLAG_NAME}`;
 
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
 const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '972525628289';
-const SAFE_MODE = options.SAFE_MODE !== undefined ? options.SAFE_MODE : true;
+const SAFE_MODE = options.SAFE_MODE !== undefined ? options.SAFE_MODE : false;
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -164,7 +164,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: '/data' }),
   webVersionCache: {
     type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1039201455-alpha.html',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.3000.1039561367-alpha.html',
   },
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
