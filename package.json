@@ -1,6 +1,6 @@
 {
   "name": "ha-whatsapp-client",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "WhatsApp client for Home Assistant (Baileys engine — no Chromium)",
   "main": "client.js",
   "scripts": {

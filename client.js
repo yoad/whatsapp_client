@@ -1,6 +1,6 @@
 // /addons/whatsapp_client/client.js
 // WhatsApp Client — event-driven bridge for HA addons
-// v2.0.2 — Baileys engine (no Chromium/Puppeteer)
+// v2.0.3 — Baileys engine (no Chromium/Puppeteer)
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -60,6 +60,7 @@ const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
 const RESTART_HOURS = options.RESTART_HOURS || 0;
 const SAFE_MODE = options.SAFE_MODE || false;
+const LIST_GROUPS = options.LIST_GROUPS || false;
 const MIGRATION_FLAG = '/data/' + (options.MIGRATION_FLAG || '.migrated_v200_baileys');
 
 if (!SUPERVISOR_TOKEN) {
@@ -251,6 +252,26 @@ async function startBaileys() {
       console.log(`[DEBUG] Pushname: ${sock.user?.name || 'N/A'}`);
 
       fireHAEvent('whatsapp_status', { status: 'connected', timestamp: Date.now() });
+
+      // List groups on startup if configured
+      if (LIST_GROUPS) {
+        try {
+          console.log('[GROUPS] Fetching participating groups...');
+          const participatingGroups = await sock.groupFetchAllParticipating();
+          const groups = Object.values(participatingGroups);
+          console.log('');
+          console.log('╔══════════════════════════════════════════╗');
+          console.log('║   👥 PARTICIPATING GROUPS (LIST_GROUPS)  ║');
+          console.log('╚══════════════════════════════════════════╝');
+          for (const g of groups) {
+            console.log(`• ${g.subject || 'No Name'}: ${g.id}`);
+          }
+          console.log('╚══════════════════════════════════════════╝');
+          console.log('');
+        } catch (err) {
+          console.error('[GROUPS] Failed to list groups:', err.message);
+        }
+      }
 
       // Send test message
       if (TEST_MESSAGE && connectedNumber !== 'unknown') {
@@ -794,13 +815,14 @@ async function main() {
   console.log(`[CONFIG] RESTART_HOURS: ${RESTART_HOURS || 'disabled'}`);
   console.log(`[CONFIG] TEST_MESSAGE: ${TEST_MESSAGE}`);
   console.log(`[CONFIG] SAFE_MODE: ${SAFE_MODE}`);
+  console.log(`[CONFIG] LIST_GROUPS: ${LIST_GROUPS}`);
   console.log(`[CONFIG] MIGRATION_FLAG: ${MIGRATION_FLAG}`);
   console.log(`[CONFIG] Node.js: ${process.version}`);
   console.log(`[CONFIG] Platform: ${process.platform} ${process.arch}`);
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   WhatsApp Client for HA                  ║');
-  console.log('║   v2.0.2 • Baileys • No Chromium          ║');
+  console.log('║   v2.0.3 • Baileys • No Chromium          ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 
