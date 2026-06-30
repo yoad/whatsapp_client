@@ -1,8 +1,8 @@
 # WhatsApp Client for Home Assistant
 
-A WhatsApp Web client that runs as a Home Assistant add-on. Bridges WhatsApp messaging to HA via events and accepts commands from other add-ons through a round-robin command queue.
+A lightweight WhatsApp client that runs as a Home Assistant add-on. Bridges WhatsApp messaging to HA via events and accepts commands from other add-ons through a round-robin command queue.
 
-Built on [whatsapp-web.js](https://github.com/pedroslopez/whatsapp-web.js) v1.34.7.
+Built on [Baileys](https://github.com/WhiskeySockets/Baileys) — connects directly via WebSocket to WhatsApp servers. **No Chromium or Puppeteer needed**, making it fast, stable, and lightweight (~50MB RAM vs ~1GB with the old Chromium-based approach).
 
 ## Features
 

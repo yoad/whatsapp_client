@@ -1,13 +1,15 @@
 // /addons/whatsapp_client/client.js
 // WhatsApp Client — event-driven bridge for HA addons
-const { Client, LocalAuth } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
+// v2.0.0 — Baileys engine (no Chromium/Puppeteer)
+
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const axios = require('axios');
 const express = require('express');
 const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
+const pino = require('pino');
 
 // ────────────────────────────────────────────────────────────
 // TIMESTAMPED LOGGING
@@ -18,58 +20,21 @@ const _ts = () => new Date().toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem
 console.log = (...args) => _origLog(`[${_ts()}]`, ...args);
 console.error = (...args) => _origErr(`[${_ts()}]`, ...args);
 
+// Baileys logger — suppress noisy internal logs
+const logger = pino({ level: 'silent' });
+
 // ────────────────────────────────────────────────────────────
 // ERROR RECOVERY
 // ────────────────────────────────────────────────────────────
-function isFatalLibraryError(err) {
-  const msg = (err && err.message) ? err.message : String(err);
-  return msg.includes('target closed') ||
-         msg.includes('session closed') ||
-         msg.includes('detached frame');
-}
-
-function isTransientError(err) {
-  const msg = (err && err.message) ? err.message : String(err);
-  return msg.includes('Execution context was destroyed') ||
-         msg.includes('timed out') ||
-         msg.includes('navigat') ||
-         msg.includes('auth timeout') ||
-         msg.includes('Cannot read properties of undefined');
-}
-
 process.on('unhandledRejection', (reason) => {
   const msg = (reason && reason.message) ? reason.message : String(reason);
-  if (isTransientError(reason)) {
-    console.log('[WARN] Transient error (suppressed):', msg);
-    return;
-  }
-  if (isFatalLibraryError(reason)) {
-    if (clientReady) {
-      console.log('[WARN] Library error (non-fatal, client is connected):', msg);
-      return;
-    }
-    console.error('[FATAL] Library crash during init — exiting for supervisor restart.');
-    setTimeout(() => process.exit(1), 3000);
-    return;
-  }
-  console.error('[FATAL] Unhandled Rejection:', reason);
+  console.error('[WARN] Unhandled Rejection:', msg);
 });
 
 process.on('uncaughtException', (err) => {
-  if (isTransientError(err)) {
-    console.log('[WARN] Transient error (suppressed):', err.message);
-    return;
-  }
-  if (isFatalLibraryError(err)) {
-    if (clientReady) {
-      console.log('[WARN] Library error (non-fatal, client is connected):', err.message);
-      return;
-    }
-    console.error('[FATAL] Library crash during init — exiting for supervisor restart.');
-    setTimeout(() => process.exit(1), 3000);
-    return;
-  }
-  console.error('[FATAL] Uncaught Exception:', err);
+  console.error('[FATAL] Uncaught Exception:', err.message);
+  // Give time to flush logs, then exit for supervisor restart
+  setTimeout(() => process.exit(1), 3000);
 });
 
 // ────────────────────────────────────────────────────────────
@@ -77,11 +42,12 @@ process.on('uncaughtException', (err) => {
 // ────────────────────────────────────────────────────────────
 const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
 const INGRESS_PORT = 3001;
-const COMMAND_DELAY_MS = 5000; // 5s between commands for stability
-const COMMAND_TIMEOUT_MS = 60000; // 60s max per command operation
+const COMMAND_DELAY_MS = 3000; // 3s between commands (Baileys is faster than Puppeteer)
+const COMMAND_TIMEOUT_MS = 30000; // 30s max per command (much faster without Chromium)
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const WS_RECONNECT_DELAY_MS = 5000;
-const MIGRATION_FLAG = '/data/.migrated_v134';
+const AUTH_DIR = '/data/baileys_auth';
+const MIGRATION_FLAG = '/data/.migrated_v200_baileys';
 
 let options = {};
 try {
@@ -91,7 +57,9 @@ try {
   console.log('No options.json, using defaults.');
 }
 
+const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
+const RESTART_HOURS = options.RESTART_HOURS || 0; // 0 = disabled (Baileys doesn't need periodic restarts)
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -106,6 +74,8 @@ let clientReady = false;
 let lastHeartbeat = null;
 let heartbeatCount = 0;
 let recentMessages = [];
+let sock = null;
+let connectedNumber = null;
 
 function pushRecentMessage(sender, body, timestamp) {
   recentMessages.push({
@@ -131,17 +101,16 @@ function withTimeout(promise, ms, label) {
   });
 }
 
-async function retry(fn, label, maxRetries = 3, baseDelayMs = 10000) {
+async function retry(fn, label, maxRetries = 3, baseDelayMs = 5000) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    if (!clientReady) throw new Error('WhatsApp not connected (client reloading)');
+    if (!clientReady) throw new Error('WhatsApp not connected');
     try {
       return await withTimeout(fn(), COMMAND_TIMEOUT_MS, label);
     } catch (err) {
       console.error(`[${label}] Attempt ${attempt}/${maxRetries} failed: ${err.message}`);
       if (!clientReady) throw new Error('WhatsApp disconnected during operation');
       if (attempt === maxRetries) throw err;
-      const backoff = baseDelayMs * attempt;
-      await delay(backoff);
+      await delay(baseDelayMs * attempt);
     }
   }
 }
@@ -169,199 +138,286 @@ async function fireHAEvent(eventType, eventData) {
 }
 
 // ────────────────────────────────────────────────────────────
-// WHATSAPP CLIENT
+// BAILEYS — MESSAGE STORE (for quoted replies & reactions)
 // ────────────────────────────────────────────────────────────
-const client = new Client({
-  authStrategy: new LocalAuth({ dataPath: '/data' }),
-  puppeteer: {
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-    protocolTimeout: 180000,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-extensions',
-      // Prevent Chromium from throttling/suspending when "backgrounded"
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-ipc-flooding-protection',
-      // Reduce unnecessary work
-      '--disable-component-update',
-      '--disable-domain-reliability',
-      '--disable-features=TranslateUI',
-      // Cap JS heap to prevent OOM on ARM devices
-      '--js-flags=--max-old-space-size=256',
-    ],
+const messageStore = new Map(); // serialized key -> message
+const MAX_STORE_SIZE = 5000;
+
+function storeMessage(msg) {
+  if (!msg.key || !msg.key.id) return;
+  const key = `${msg.key.remoteJid}|${msg.key.id}`;
+  messageStore.set(key, msg);
+  // Evict oldest if store too large
+  if (messageStore.size > MAX_STORE_SIZE) {
+    const firstKey = messageStore.keys().next().value;
+    messageStore.delete(firstKey);
   }
-});
+}
 
-// --- QR Code ---
-client.on('qr', async (qr) => {
-  console.log('');
-  console.log('╔══════════════════════════════════════════╗');
-  console.log('║   SCAN THIS QR CODE WITH WHATSAPP        ║');
-  console.log('╚══════════════════════════════════════════╝');
-  qrcode.generate(qr, { small: true });
-  console.log('');
+function findStoredMessage(chatId, messageId) {
+  // Try direct lookup
+  const key = `${chatId}|${messageId}`;
+  if (messageStore.has(key)) return messageStore.get(key);
+  // Search all keys (messageId might be from a different serialization)
+  for (const [k, v] of messageStore) {
+    if (v.key && v.key.id === messageId) return v;
+  }
+  return null;
+}
 
-  connectionStatus = 'qr_required';
-  try {
-    currentQRDataUrl = await QRCode.toDataURL(qr, { width: 300 });
-  } catch (e) {
-    console.error('Failed to generate QR data URL:', e.message);
+// ────────────────────────────────────────────────────────────
+// BAILEYS — CONNECTION
+// ────────────────────────────────────────────────────────────
+async function startBaileys() {
+  // Ensure auth directory exists
+  if (!fs.existsSync(AUTH_DIR)) {
+    fs.mkdirSync(AUTH_DIR, { recursive: true });
   }
 
-  fireHAEvent('whatsapp_status', { status: 'qr_required', timestamp: Date.now() });
-});
+  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
 
-// --- Auth ---
-let authLogged = false;
-client.on('authenticated', () => {
-  if (!authLogged) {
-    console.log('[Auth] ✅ Authenticated — session saved');
-    authLogged = true;
-  }
-});
+  const { version } = await fetchLatestBaileysVersion();
+  console.log(`[INIT] Baileys version: ${version.join('.')}`);
+  console.log(`[INIT] Auth directory: ${AUTH_DIR}`);
 
-client.on('auth_failure', (msg) => {
-  console.error('[Auth] ❌ Authentication failure:', msg);
-});
+  sock = makeWASocket({
+    version,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
+    logger,
+    browser: Browsers.ubuntu('HA-WhatsApp'),
+    printQRInTerminal: true,
+    generateHighQualityLinkPreview: false,
+    markOnlineOnConnect: false,
+    // getMessage for retry system
+    getMessage: async (key) => {
+      const stored = findStoredMessage(key.remoteJid, key.id);
+      return stored?.message || undefined;
+    }
+  });
 
-client.on('loading_screen', (percent, message) => {
-  console.log(`[Loading] ${percent}% — ${message}`);
-  // WhatsApp is reloading — pause command queue until 'ready' fires again
-  if (clientReady) {
-    console.log('[RELOAD] WhatsApp Web is reloading — pausing command queue');
-    clientReady = false;
-    connectionStatus = 'reloading';
-  }
-});
+  // --- Save credentials on update ---
+  sock.ev.on('creds.update', saveCreds);
 
-// --- Ready ---
-client.on('ready', async () => {
-  clientReady = true;
-  connectionStatus = 'connected';
-  currentQRDataUrl = null;
+  // --- Connection updates ---
+  sock.ev.on('connection.update', async (update) => {
+    const { connection, lastDisconnect, qr } = update;
 
-  const me = client.info.wid.user;
-  console.log('');
-  console.log('╔══════════════════════════════════════════╗');
-  console.log(`║   ✅ CONNECTED as ${me}            ║`);
-  console.log('╚══════════════════════════════════════════╝');
-  console.log('');
+    // QR Code
+    if (qr) {
+      console.log('');
+      console.log('╔══════════════════════════════════════════╗');
+      console.log('║   SCAN THIS QR CODE WITH WHATSAPP        ║');
+      console.log('╚══════════════════════════════════════════╝');
+      console.log('');
 
-  fireHAEvent('whatsapp_status', { status: 'connected', timestamp: Date.now() });
+      connectionStatus = 'qr_required';
+      try {
+        currentQRDataUrl = await QRCode.toDataURL(qr, { width: 300 });
+      } catch (e) {
+        console.error('Failed to generate QR data URL:', e.message);
+      }
 
-  // Send test message to self
-  if (TEST_MESSAGE) {
+      fireHAEvent('whatsapp_status', { status: 'qr_required', timestamp: Date.now() });
+    }
+
+    // Connected
+    if (connection === 'open') {
+      clientReady = true;
+      connectionStatus = 'connected';
+      currentQRDataUrl = null;
+
+      // Extract connected number
+      try {
+        connectedNumber = sock.user?.id?.split(':')[0] || sock.user?.id?.split('@')[0] || 'unknown';
+      } catch (_) {
+        connectedNumber = 'unknown';
+      }
+
+      console.log('');
+      console.log('╔══════════════════════════════════════════╗');
+      console.log(`║   ✅ CONNECTED as ${connectedNumber}            ║`);
+      console.log('╚══════════════════════════════════════════╝');
+      console.log('');
+
+      console.log(`[DEBUG] WID: ${sock.user?.id}`);
+      console.log(`[DEBUG] Platform: Baileys (no Chromium)`);
+      console.log(`[DEBUG] Pushname: ${sock.user?.name || 'N/A'}`);
+
+      fireHAEvent('whatsapp_status', { status: 'connected', timestamp: Date.now() });
+
+      // Send test message
+      if (TEST_MESSAGE && connectedNumber !== 'unknown') {
+        try {
+          const testJid = connectedNumber + '@s.whatsapp.net';
+          await sock.sendMessage(testJid, { text: '✅ WhatsApp Client connected successfully! (Baileys engine — no Chromium)' });
+          console.log(`[TEST] ✅ Test message sent to self (${connectedNumber})`);
+        } catch (err) {
+          console.error(`[TEST] ❌ Test message failed: ${err.message}`);
+        }
+      }
+
+      // Schedule restart if configured
+      if (RESTART_HOURS > 0) {
+        const restartMs = RESTART_HOURS * 60 * 60 * 1000;
+        console.log(`[RESTART] Scheduled automatic restart in ${RESTART_HOURS} hour(s)`);
+        setTimeout(() => {
+          console.log('');
+          console.log('╔══════════════════════════════════════════╗');
+          console.log('║   🔄 SCHEDULED RESTART                    ║');
+          console.log('╚══════════════════════════════════════════╝');
+          console.log(`[RESTART] Uptime: ${RESTART_HOURS * 60} minutes`);
+          console.log(`[RESTART] Status: ${connectionStatus}`);
+          console.log(`[RESTART] Heartbeats sent: ${heartbeatCount}`);
+          console.log(`[RESTART] Command queue depth: ${getTotalQueueLength()}`);
+          console.log('[RESTART] Exiting now — supervisor will restart...');
+          process.exit(0);
+        }, restartMs);
+      }
+    }
+
+    // Disconnected
+    if (connection === 'close') {
+      clientReady = false;
+      connectionStatus = 'disconnected';
+
+      const statusCode = lastDisconnect?.error?.output?.statusCode;
+      const reason = lastDisconnect?.error?.message || 'unknown';
+      console.error(`[Disconnected] Code: ${statusCode}, Reason: ${reason}`);
+
+      fireHAEvent('whatsapp_status', { status: 'disconnected', reason, timestamp: Date.now() });
+
+      // Check if we should reconnect
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+      if (shouldReconnect) {
+        console.log('[RECONNECT] Reconnecting in 5s...');
+        await delay(5000);
+        startBaileys();
+      } else {
+        console.error('[LOGOUT] Session was logged out — clearing auth and exiting.');
+        try {
+          fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+        } catch (_) {}
+        // Exit so supervisor restarts fresh with QR scan
+        setTimeout(() => process.exit(1), 3000);
+      }
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────
+  // MESSAGE LISTENERS — fire HA events for each message
+  // ────────────────────────────────────────────────────────────
+
+  sock.ev.on('messages.upsert', async ({ messages, type }) => {
     try {
-      const testId = me + '@c.us';
-      await client.sendMessage(testId, '✅ WhatsApp Client connected successfully!');
-      console.log(`[TEST] ✅ Test message sent to self (${me})`);
-    } catch (err) {
-      console.error(`[TEST] ❌ Test message failed: ${err.message}`);
+      if (!clientReady) return;
+
+      for (const msg of messages) {
+        // Store message for later lookups (quoted replies, reactions)
+        storeMessage(msg);
+
+        // Skip protocol/system messages
+        if (!msg.message) continue;
+
+        const body = msg.message.conversation ||
+                     msg.message.extendedTextMessage?.text ||
+                     msg.message.imageMessage?.caption ||
+                     msg.message.videoMessage?.caption ||
+                     msg.message.documentMessage?.caption ||
+                     '';
+
+        const fromMe = msg.key.fromMe || false;
+        const remoteJid = msg.key.remoteJid || '';
+        const isGroup = remoteJid.endsWith('@g.us');
+        const sender = msg.pushName || msg.key.participant || msg.key.remoteJid || 'Unknown';
+        const timestamp = msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000);
+        const messageId = msg.key.id || `${timestamp}-${sender}`;
+        const hasMedia = !!(msg.message.imageMessage || msg.message.videoMessage ||
+                           msg.message.audioMessage || msg.message.documentMessage ||
+                           msg.message.stickerMessage);
+
+        if (fromMe) {
+          // Self-sent messages (for notes group etc.)
+          const groupId = remoteJid;
+          console.log(`[MSG_CREATE] Self-sent to ${groupId}: ${body.substring(0, 80)}...`);
+          pushRecentMessage('Me', body, timestamp);
+
+          fireHAEvent('whatsapp_message_create', {
+            group_id: groupId,
+            body: body,
+            timestamp: timestamp,
+            message_id: messageId,
+            from_me: true
+          });
+        } else {
+          // Messages from others
+          console.log(`[MSG] ${isGroup ? 'Group' : 'DM'} ${remoteJid}: ${body.substring(0, 80)}...`);
+          pushRecentMessage(sender, body, timestamp);
+
+          fireHAEvent('whatsapp_message', {
+            group_id: remoteJid,
+            sender: sender,
+            body: body,
+            timestamp: timestamp,
+            message_id: messageId,
+            is_group: isGroup,
+            from_me: false,
+            has_media: hasMedia
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error handling messages.upsert:', error.message);
     }
-  }
-});
+  });
 
-// --- Disconnected ---
-client.on('disconnected', (reason) => {
-  console.error('[Disconnected]', reason);
-  clientReady = false;
-  connectionStatus = 'disconnected';
-  fireHAEvent('whatsapp_status', { status: 'disconnected', reason, timestamp: Date.now() });
-});
+  // Message edits
+  sock.ev.on('messages.update', async (updates) => {
+    try {
+      if (!clientReady) return;
 
-// ────────────────────────────────────────────────────────────
-// MESSAGE LISTENERS — fire HA events for each message
-// ────────────────────────────────────────────────────────────
+      for (const update of updates) {
+        // Detect edited messages
+        if (update.update?.message) {
+          const editedMsg = update.update.message;
+          const newBody = editedMsg.conversation ||
+                          editedMsg.extendedTextMessage?.text ||
+                          editedMsg.protocolMessage?.editedMessage?.message?.conversation ||
+                          editedMsg.protocolMessage?.editedMessage?.message?.extendedTextMessage?.text ||
+                          '';
 
-// Messages from others
-client.on('message', async (msg) => {
-  try {
-    if (!clientReady) return;
+          if (newBody && update.key) {
+            const groupId = update.key.remoteJid || '';
+            const messageId = update.key.id || '';
 
-    const sender = (msg._data && msg._data.notifyName) || msg.author || 'Unknown';
-    const isGroup = msg.from && msg.from.endsWith('@g.us');
-    const messageId = msg.id && msg.id._serialized ? msg.id._serialized : `${msg.timestamp}-${sender}`;
+            console.log(`[EDIT] ${groupId}: ${newBody.substring(0, 80)}...`);
 
-    console.log(`[MSG] ${isGroup ? 'Group' : 'DM'} ${msg.from}: ${(msg.body || '').substring(0, 80)}...`);
-    pushRecentMessage(sender, msg.body, msg.timestamp);
-
-    fireHAEvent('whatsapp_message', {
-      group_id: msg.from,
-      sender: sender,
-      body: msg.body || '',
-      timestamp: msg.timestamp,
-      message_id: messageId,
-      is_group: isGroup,
-      from_me: false,
-      has_media: msg.hasMedia || false
-    });
-  } catch (error) {
-    console.error('Error handling message:', error.message);
-  }
-});
-
-// Self-sent messages (for notes group etc.)
-client.on('message_create', async (msg) => {
-  try {
-    if (!clientReady) return;
-    if (!msg.fromMe) return;
-
-    const groupId = msg.to || msg.from;
-    const messageId = msg.id && msg.id._serialized ? msg.id._serialized : `${msg.timestamp}-self`;
-
-    console.log(`[MSG_CREATE] Self-sent to ${groupId}: ${(msg.body || '').substring(0, 80)}...`);
-    pushRecentMessage('Me', msg.body, msg.timestamp);
-
-    fireHAEvent('whatsapp_message_create', {
-      group_id: groupId,
-      body: msg.body || '',
-      timestamp: msg.timestamp,
-      message_id: messageId,
-      from_me: true
-    });
-  } catch (error) {
-    console.error('Error handling message_create:', error.message);
-  }
-});
-
-// Message edits
-client.on('message_edit', async (msg, newBody, prevBody) => {
-  try {
-    if (!clientReady) return;
-
-    const groupId = msg.from || msg.to || (msg._data && (msg._data.from || msg._data.to));
-    const messageId = msg.id && msg.id._serialized ? msg.id._serialized : null;
-
-    if (groupId && messageId) {
-      console.log(`[EDIT] ${groupId}: ${(newBody || '').substring(0, 80)}...`);
-
-      fireHAEvent('whatsapp_message_edit', {
-        group_id: groupId,
-        message_id: messageId,
-        body: newBody || msg.body,
-        new_body: newBody || msg.body,
-        prev_body: prevBody || '',
-        from_me: msg.fromMe || false,
-        timestamp: Math.floor(Date.now() / 1000)
-      });
+            fireHAEvent('whatsapp_message_edit', {
+              group_id: groupId,
+              message_id: messageId,
+              body: newBody,
+              new_body: newBody,
+              prev_body: '',
+              from_me: update.key.fromMe || false,
+              timestamp: Math.floor(Date.now() / 1000)
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error handling messages.update:', error.message);
     }
-  } catch (error) {
-    console.error('Error handling message_edit:', error.message);
-  }
-});
+  });
+}
 
 // ────────────────────────────────────────────────────────────
 // COMMAND QUEUE — true round-robin by app_id with delay
 // ────────────────────────────────────────────────────────────
-const appQueues = new Map();  // app_id -> [{eventType, eventData, requestId}, ...]
-let roundRobinOrder = [];     // rotating list of app_ids with pending commands
+const appQueues = new Map();
+let roundRobinOrder = [];
 let roundRobinIndex = 0;
 let processingCommand = false;
 
@@ -375,7 +431,6 @@ async function handleCommand(eventType, eventData) {
   const requestId = eventData.request_id || `auto-${Date.now()}`;
   const appId = eventData.app_id || 'unknown';
 
-  // Add to the app's sub-queue
   if (!appQueues.has(appId)) {
     appQueues.set(appId, []);
     roundRobinOrder.push(appId);
@@ -390,18 +445,16 @@ async function processCommandQueue() {
   if (processingCommand) return;
   if (getTotalQueueLength() === 0) return;
 
-  // Wait for client to be ready before processing commands
+  // Wait for client to be ready
   if (!clientReady) {
     console.log(`[CMD] Client not ready — deferring ${getTotalQueueLength()} queued commands`);
-    setTimeout(processCommandQueue, 10000); // retry in 10s
+    setTimeout(processCommandQueue, 10000);
     return;
   }
 
-  // Clean up empty queues from the round-robin order
   roundRobinOrder = roundRobinOrder.filter(id => appQueues.has(id) && appQueues.get(id).length > 0);
   if (roundRobinOrder.length === 0) return;
 
-  // Pick the next app in round-robin
   roundRobinIndex = roundRobinIndex % roundRobinOrder.length;
   const appId = roundRobinOrder[roundRobinIndex];
   roundRobinIndex++;
@@ -409,7 +462,6 @@ async function processCommandQueue() {
   const queue = appQueues.get(appId);
   const { eventType, eventData, requestId } = queue.shift();
 
-  // Clean up if the queue is now empty
   if (queue.length === 0) {
     appQueues.delete(appId);
   }
@@ -420,16 +472,19 @@ async function processCommandQueue() {
   try {
     switch (eventType) {
       case 'whatsapp_command_send': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
+        if (!clientReady || !sock) throw new Error('WhatsApp not connected');
         const { target_id, message, quoted_message_id } = eventData;
         if (!target_id || !message) throw new Error('target_id and message required');
 
-        const chat = await retry(() => client.getChatById(target_id), `send-${target_id}`);
         const sendOptions = {};
         if (quoted_message_id) {
-          sendOptions.quotedMessageId = quoted_message_id;
+          const quotedMsg = findStoredMessage(target_id, quoted_message_id);
+          if (quotedMsg) {
+            sendOptions.quoted = quotedMsg;
+          }
         }
-        await chat.sendMessage(message, sendOptions);
+
+        await retry(() => sock.sendMessage(target_id, { text: message }, sendOptions), `send-${target_id}`);
         console.log(`[CMD] ✅ Message sent to ${target_id}`);
 
         fireHAEvent('whatsapp_response', { request_id: requestId, command: 'send', success: true });
@@ -437,24 +492,32 @@ async function processCommandQueue() {
       }
 
       case 'whatsapp_command_fetch': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
+        if (!clientReady || !sock) throw new Error('WhatsApp not connected');
         const { group_id, limit = 50 } = eventData;
         if (!group_id) throw new Error('group_id required');
 
-        const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
-        const messages = await withTimeout(
-          chat.fetchMessages({ limit: Math.min(limit, 200) }),
-          COMMAND_TIMEOUT_MS,
-          `fetchMessages-${group_id}`
-        );
+        // Fetch messages using store — Baileys doesn't have a direct fetchMessages like wwebjs
+        // We collect from our message store
+        const fetchedMessages = [];
+        for (const [, msg] of messageStore) {
+          if (msg.key && msg.key.remoteJid === group_id) {
+            const body = msg.message?.conversation ||
+                         msg.message?.extendedTextMessage?.text ||
+                         msg.message?.imageMessage?.caption ||
+                         '';
+            fetchedMessages.push({
+              body: body,
+              timestamp: msg.messageTimestamp ? Number(msg.messageTimestamp) : 0,
+              sender: msg.pushName || msg.key.participant || 'Unknown',
+              message_id: msg.key.id || null,
+              from_me: msg.key.fromMe || false
+            });
+          }
+        }
 
-        const msgData = messages.map(m => ({
-          body: m.body || '',
-          timestamp: m.timestamp,
-          sender: (m._data && m._data.notifyName) || m.author || 'Unknown',
-          message_id: m.id && m.id._serialized ? m.id._serialized : null,
-          from_me: m.fromMe || false
-        }));
+        // Sort by timestamp descending and limit
+        fetchedMessages.sort((a, b) => b.timestamp - a.timestamp);
+        const msgData = fetchedMessages.slice(0, Math.min(limit, 200));
 
         console.log(`[CMD] ✅ Fetched ${msgData.length} messages from ${group_id}`);
         fireHAEvent('whatsapp_response', { request_id: requestId, command: 'fetch', success: true, data: msgData });
@@ -462,20 +525,30 @@ async function processCommandQueue() {
       }
 
       case 'whatsapp_command_react': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
+        if (!clientReady || !sock) throw new Error('WhatsApp not connected');
         const { message_id, chat_id, emoji } = eventData;
         if (!message_id || !chat_id || !emoji) throw new Error('message_id, chat_id, and emoji required');
 
         try {
-          const chat = await client.getChatById(chat_id);
-          const messages = await chat.fetchMessages({ limit: 50 });
-          const targetMsg = messages.find(m => m.id && m.id._serialized === message_id);
-
-          if (targetMsg) {
-            await targetMsg.react(emoji);
+          const storedMsg = findStoredMessage(chat_id, message_id);
+          if (storedMsg) {
+            await sock.sendMessage(chat_id, {
+              react: { text: emoji, key: storedMsg.key }
+            });
             console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id}`);
           } else {
-            console.log(`[CMD] ⚠️ React skipped — message not in recent 50`);
+            // Construct key manually if not in store
+            await sock.sendMessage(chat_id, {
+              react: {
+                text: emoji,
+                key: {
+                  remoteJid: chat_id,
+                  id: message_id,
+                  fromMe: false
+                }
+              }
+            });
+            console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id} (key reconstructed)`);
           }
         } catch (reactErr) {
           console.log(`[CMD] React failed (non-fatal): ${reactErr.message}`);
@@ -486,10 +559,15 @@ async function processCommandQueue() {
       }
 
       case 'whatsapp_command_list_groups': {
-        if (!clientReady) throw new Error('WhatsApp not connected');
+        if (!clientReady || !sock) throw new Error('WhatsApp not connected');
 
-        const chats = await client.getChats();
-        const groups = chats.filter(c => c.isGroup).map(c => ({ id: c.id._serialized, name: c.name }));
+        const groups = await retry(async () => {
+          const participatingGroups = await sock.groupFetchAllParticipating();
+          return Object.values(participatingGroups).map(g => ({
+            id: g.id,
+            name: g.subject || g.id
+          }));
+        }, 'list-groups');
 
         console.log(`[CMD] ✅ Listed ${groups.length} groups`);
         fireHAEvent('whatsapp_response', { request_id: requestId, command: 'list_groups', success: true, data: groups });
@@ -501,7 +579,13 @@ async function processCommandQueue() {
           request_id: requestId,
           command: 'status',
           success: true,
-          data: { status: connectionStatus, client_ready: clientReady, last_heartbeat: lastHeartbeat, timestamp: Date.now() }
+          data: {
+            status: connectionStatus,
+            client_ready: clientReady,
+            last_heartbeat: lastHeartbeat,
+            engine: 'baileys',
+            timestamp: Date.now()
+          }
         });
         break;
       }
@@ -517,16 +601,8 @@ async function processCommandQueue() {
       success: false,
       error: err.message
     });
-
-    if (isFatalLibraryError(err)) {
-      console.error('[CMD] Fatal library error — scheduling restart.');
-      setTimeout(() => process.exit(1), 3000);
-    } else if (isTransientError(err)) {
-      console.log('[CMD] Transient error — skipping command, continuing queue.');
-    }
   } finally {
     processingCommand = false;
-    // Round-robin delay — wait before processing next command
     setTimeout(processCommandQueue, COMMAND_DELAY_MS);
   }
 }
@@ -549,7 +625,6 @@ function connectHAWebSocket() {
 
   haWs.on('open', () => {
     console.log('[WS] WebSocket connected');
-    // Keep-alive: send WS pings every 30s to prevent HA from dropping us
     if (wsPingInterval) clearInterval(wsPingInterval);
     wsPingInterval = setInterval(() => {
       try { if (haWs && haWs.readyState === WebSocket.OPEN) haWs.ping(); } catch (_) {}
@@ -630,13 +705,6 @@ const app = express();
 app.use(express.json());
 
 app.get('/api/status', (req, res) => {
-  let connectedNumber = null;
-  try {
-    if (clientReady && client.info && client.info.wid) {
-      connectedNumber = client.info.wid.user;
-    }
-  } catch (_) {}
-
   res.json({
     status: connectionStatus,
     connected_number: connectedNumber,
@@ -646,6 +714,7 @@ app.get('/api/status', (req, res) => {
     command_queues: Object.fromEntries([...appQueues.entries()].map(([k, v]) => [k, v.length])),
     last_heartbeat: lastHeartbeat,
     heartbeat_count: heartbeatCount,
+    engine: 'baileys',
   });
 });
 
@@ -658,16 +727,10 @@ app.listen(INGRESS_PORT, () => {
 // ────────────────────────────────────────────────────────────
 // STARTUP
 // ────────────────────────────────────────────────────────────
-function cleanupChromium() {
-  for (const p of ['/data/session/SingletonLock', '/data/session/SingletonSocket', '/data/session/SingletonCookie']) {
-    try { fs.unlinkSync(p); console.log(`Removed stale lock: ${p}`); } catch {}
-  }
-}
-
 function clearOldSession() {
   if (fs.existsSync(MIGRATION_FLAG)) return;
 
-  console.log('[Migration] First run on v1.34 — clearing old session data...');
+  console.log('[Migration] First run on v2.0.0 (Baileys) — clearing old Chromium session data...');
   for (const dir of ['/data/.wwebjs_auth', '/data/session']) {
     try {
       if (fs.existsSync(dir)) {
@@ -683,23 +746,27 @@ function clearOldSession() {
 }
 
 async function main() {
+  console.log(`[CONFIG] CONNECTED_NUMBER: ${CONNECTED_NUMBER || '(auto-detect)'}`);
+  console.log(`[CONFIG] RESTART_HOURS: ${RESTART_HOURS || 'disabled'}`);
+  console.log(`[CONFIG] TEST_MESSAGE: ${TEST_MESSAGE}`);
+  console.log(`[CONFIG] Node.js: ${process.version}`);
+  console.log(`[CONFIG] Platform: ${process.platform} ${process.arch}`);
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   WhatsApp Client for HA                  ║');
-  console.log('║   v1.2.0 • Event-driven • Round-robin     ║');
+  console.log('║   v2.0.0 • Baileys • No Chromium          ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 
   clearOldSession();
-  cleanupChromium();
 
   // Connect to HA WebSocket for command events
   connectHAWebSocket();
 
-  console.log('Initializing WhatsApp client...');
+  console.log('Initializing WhatsApp client (Baileys)...');
   try {
-    await client.initialize();
-    console.log('✅ Client initialized');
+    await startBaileys();
+    console.log('✅ Baileys socket created');
   } catch (err) {
     console.error('❌ Init failed:', err.message);
     console.error(err.stack);
