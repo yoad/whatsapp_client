@@ -1,6 +1,6 @@
 // /addons/whatsapp_client/client.js
 // WhatsApp Client — event-driven bridge for HA addons
-// v2.0.3 — Baileys engine (no Chromium/Puppeteer)
+// v2.0.4 — Baileys engine (no Chromium/Puppeteer)
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -60,7 +60,6 @@ const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
 const RESTART_HOURS = options.RESTART_HOURS || 0;
 const SAFE_MODE = options.SAFE_MODE || false;
-const LIST_GROUPS = options.LIST_GROUPS || false;
 const MIGRATION_FLAG = '/data/' + (options.MIGRATION_FLAG || '.migrated_v200_baileys');
 
 if (!SUPERVISOR_TOKEN) {
@@ -253,26 +252,6 @@ async function startBaileys() {
 
       fireHAEvent('whatsapp_status', { status: 'connected', timestamp: Date.now() });
 
-      // List groups on startup if configured
-      if (LIST_GROUPS) {
-        try {
-          console.log('[GROUPS] Fetching participating groups...');
-          const participatingGroups = await sock.groupFetchAllParticipating();
-          const groups = Object.values(participatingGroups);
-          console.log('');
-          console.log('╔══════════════════════════════════════════╗');
-          console.log('║   👥 PARTICIPATING GROUPS (LIST_GROUPS)  ║');
-          console.log('╚══════════════════════════════════════════╝');
-          for (const g of groups) {
-            console.log(`• ${g.subject || 'No Name'}: ${g.id}`);
-          }
-          console.log('╚══════════════════════════════════════════╝');
-          console.log('');
-        } catch (err) {
-          console.error('[GROUPS] Failed to list groups:', err.message);
-        }
-      }
-
       // Send test message
       if (TEST_MESSAGE && connectedNumber !== 'unknown') {
         try {
@@ -335,6 +314,38 @@ async function startBaileys() {
   // ────────────────────────────────────────────────────────────
   // MESSAGE LISTENERS — fire HA events for each message
   // ────────────────────────────────────────────────────────────
+
+  sock.ev.on('messaging-history.set', async ({ chats }) => {
+    try {
+      const groups = (chats || []).filter(c => c.id && c.id.endsWith('@g.us'));
+      
+      // Sort by conversationTimestamp descending (most recent first)
+      groups.sort((a, b) => {
+        const timeA = a.conversationTimestamp ? Number(a.conversationTimestamp) : 0;
+        const timeB = b.conversationTimestamp ? Number(b.conversationTimestamp) : 0;
+        return timeB - timeA;
+      });
+
+      // Take top 20
+      const top20 = groups.slice(0, 20);
+
+      console.log('');
+      console.log('╔══════════════════════════════════════════╗');
+      console.log('║   👥 LAST 20 ACTIVE GROUPS (STARTUP)      ║');
+      console.log('╚══════════════════════════════════════════╝');
+      for (const g of top20) {
+        const name = g.name || g.subject || 'Unknown Name';
+        const dateStr = g.conversationTimestamp 
+          ? new Date(Number(g.conversationTimestamp) * 1000).toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem', dateStyle: 'short', timeStyle: 'short' })
+          : 'N/A';
+        console.log(`• [${dateStr}] ${name}: ${g.id}`);
+      }
+      console.log('╚══════════════════════════════════════════╝');
+      console.log('');
+    } catch (err) {
+      console.error('[GROUPS] Failed to process active groups history:', err.message);
+    }
+  });
 
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     try {
@@ -815,14 +826,13 @@ async function main() {
   console.log(`[CONFIG] RESTART_HOURS: ${RESTART_HOURS || 'disabled'}`);
   console.log(`[CONFIG] TEST_MESSAGE: ${TEST_MESSAGE}`);
   console.log(`[CONFIG] SAFE_MODE: ${SAFE_MODE}`);
-  console.log(`[CONFIG] LIST_GROUPS: ${LIST_GROUPS}`);
   console.log(`[CONFIG] MIGRATION_FLAG: ${MIGRATION_FLAG}`);
   console.log(`[CONFIG] Node.js: ${process.version}`);
   console.log(`[CONFIG] Platform: ${process.platform} ${process.arch}`);
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   WhatsApp Client for HA                  ║');
-  console.log('║   v2.0.3 • Baileys • No Chromium          ║');
+  console.log('║   v2.0.4 • Baileys • No Chromium          ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 

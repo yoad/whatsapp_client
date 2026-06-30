@@ -1,6 +1,6 @@
 # /addons/whatsapp_client/config.yaml
 name: "WhatsApp Client"
-version: "2.0.3"
+version: "2.0.4"
 slug: "whatsapp_client"
 description: "WhatsApp client for HA — Baileys engine (no Chromium, lightweight)"
 arch:
@@ -19,10 +19,8 @@ options:
   RESTART_HOURS: 0
   SAFE_MODE: false
   MIGRATION_FLAG: ".migrated_v200_baileys"
-  LIST_GROUPS: false
 schema:
   TEST_MESSAGE: bool
   RESTART_HOURS: int
   SAFE_MODE: bool
   MIGRATION_FLAG: str
-  LIST_GROUPS: bool
