@@ -6,6 +6,7 @@ FROM node:20-slim
 # Just install minimal system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
