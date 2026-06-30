@@ -43,11 +43,10 @@ process.on('uncaughtException', (err) => {
 const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
 const INGRESS_PORT = 3001;
 const COMMAND_DELAY_MS = 3000; // 3s between commands (Baileys is faster than Puppeteer)
-const COMMAND_TIMEOUT_MS = 30000; // 30s max per command (much faster without Chromium)
-const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+const COMMAND_TIMEOUT_MS = 30000; // 30s max per command
+const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
 const WS_RECONNECT_DELAY_MS = 5000;
 const AUTH_DIR = '/data/baileys_auth';
-const MIGRATION_FLAG = '/data/.migrated_v200_baileys';
 
 let options = {};
 try {
@@ -61,6 +60,7 @@ const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
 const RESTART_HOURS = options.RESTART_HOURS || 0;
 const SAFE_MODE = options.SAFE_MODE || false;
+const MIGRATION_FLAG = '/data/' + (options.MIGRATION_FLAG || '.migrated_v200_baileys');
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -754,7 +754,8 @@ app.listen(INGRESS_PORT, () => {
 function clearOldSession() {
   if (fs.existsSync(MIGRATION_FLAG)) return;
 
-  console.log('[Migration] First run on v2.0.0 (Baileys) — clearing old Chromium session data...');
+  console.log(`[Migration] Flag "${MIGRATION_FLAG}" not found — clearing session for fresh QR scan...`);
+  // Clear old whatsapp-web.js sessions
   for (const dir of ['/data/.wwebjs_auth', '/data/session']) {
     try {
       if (fs.existsSync(dir)) {
@@ -765,6 +766,25 @@ function clearOldSession() {
       console.error(`[Migration] Failed to clear ${dir}: ${err.message}`);
     }
   }
+  // Clear Baileys auth
+  try {
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+      console.log(`[Migration] Cleared: ${AUTH_DIR}`);
+    }
+  } catch (err) {
+    console.error(`[Migration] Failed to clear ${AUTH_DIR}: ${err.message}`);
+  }
+  // Clean up old migration flags
+  try {
+    const dataFiles = fs.readdirSync('/data/');
+    for (const f of dataFiles) {
+      if (f.startsWith('.migrated_')) {
+        fs.unlinkSync(`/data/${f}`);
+        console.log(`[Migration] Removed old flag: ${f}`);
+      }
+    }
+  } catch (_) {}
   try { fs.writeFileSync(MIGRATION_FLAG, new Date().toISOString()); } catch {}
   console.log('[Migration] Done — will prompt for fresh QR scan.');
 }
@@ -774,6 +794,7 @@ async function main() {
   console.log(`[CONFIG] RESTART_HOURS: ${RESTART_HOURS || 'disabled'}`);
   console.log(`[CONFIG] TEST_MESSAGE: ${TEST_MESSAGE}`);
   console.log(`[CONFIG] SAFE_MODE: ${SAFE_MODE}`);
+  console.log(`[CONFIG] MIGRATION_FLAG: ${MIGRATION_FLAG}`);
   console.log(`[CONFIG] Node.js: ${process.version}`);
   console.log(`[CONFIG] Platform: ${process.platform} ${process.arch}`);
   console.log('');

@@ -18,7 +18,9 @@ options:
   TEST_MESSAGE: true
   RESTART_HOURS: 0
   SAFE_MODE: false
+  MIGRATION_FLAG: ".migrated_v200_baileys"
 schema:
   TEST_MESSAGE: bool
   RESTART_HOURS: int
   SAFE_MODE: bool
+  MIGRATION_FLAG: str
