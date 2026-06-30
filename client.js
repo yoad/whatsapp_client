@@ -21,7 +21,7 @@ console.log = (...args) => _origLog(`[${_ts()}]`, ...args);
 console.error = (...args) => _origErr(`[${_ts()}]`, ...args);
 
 // Baileys logger — suppress noisy internal logs
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: 'error' });
 
 // ────────────────────────────────────────────────────────────
 // ERROR RECOVERY
@@ -59,7 +59,8 @@ try {
 
 const CONNECTED_NUMBER = options.CONNECTED_NUMBER || '';
 const TEST_MESSAGE = options.TEST_MESSAGE !== undefined ? options.TEST_MESSAGE : true;
-const RESTART_HOURS = options.RESTART_HOURS || 0; // 0 = disabled (Baileys doesn't need periodic restarts)
+const RESTART_HOURS = options.RESTART_HOURS || 0;
+const SAFE_MODE = options.SAFE_MODE || false;
 
 if (!SUPERVISOR_TOKEN) {
   console.error('WARNING: SUPERVISOR_TOKEN not available — HA integration will not work.');
@@ -76,6 +77,7 @@ let heartbeatCount = 0;
 let recentMessages = [];
 let sock = null;
 let connectedNumber = null;
+let connectedAt = 0; // timestamp (seconds) when we connected — ignore older messages
 
 function pushRecentMessage(sender, body, timestamp) {
   recentMessages.push({
@@ -188,7 +190,6 @@ async function startBaileys() {
     },
     logger,
     browser: Browsers.ubuntu('HA-WhatsApp'),
-    printQRInTerminal: true,
     generateHighQualityLinkPreview: false,
     markOnlineOnConnect: false,
     // getMessage for retry system
@@ -235,6 +236,9 @@ async function startBaileys() {
       } catch (_) {
         connectedNumber = 'unknown';
       }
+
+      // Track connection time — ignore messages older than this during initial sync
+      connectedAt = Math.floor(Date.now() / 1000);
 
       console.log('');
       console.log('╔══════════════════════════════════════════╗');
@@ -322,6 +326,13 @@ async function startBaileys() {
         // Skip protocol/system messages
         if (!msg.message) continue;
 
+        // Skip old messages from initial history sync (only process new ones)
+        const timestamp = msg.messageTimestamp ? Number(msg.messageTimestamp) : 0;
+        if (timestamp > 0 && timestamp < connectedAt - 30) {
+          // Store for reactions/replies but don't fire HA events
+          continue;
+        }
+
         const body = msg.message.conversation ||
                      msg.message.extendedTextMessage?.text ||
                      msg.message.imageMessage?.caption ||
@@ -333,8 +344,8 @@ async function startBaileys() {
         const remoteJid = msg.key.remoteJid || '';
         const isGroup = remoteJid.endsWith('@g.us');
         const sender = msg.pushName || msg.key.participant || msg.key.remoteJid || 'Unknown';
-        const timestamp = msg.messageTimestamp ? Number(msg.messageTimestamp) : Math.floor(Date.now() / 1000);
-        const messageId = msg.key.id || `${timestamp}-${sender}`;
+        const msgTimestamp = timestamp || Math.floor(Date.now() / 1000);
+        const messageId = msg.key.id || `${msgTimestamp}-${sender}`;
         const hasMedia = !!(msg.message.imageMessage || msg.message.videoMessage ||
                            msg.message.audioMessage || msg.message.documentMessage ||
                            msg.message.stickerMessage);
@@ -343,25 +354,25 @@ async function startBaileys() {
           // Self-sent messages (for notes group etc.)
           const groupId = remoteJid;
           console.log(`[MSG_CREATE] Self-sent to ${groupId}: ${body.substring(0, 80)}...`);
-          pushRecentMessage('Me', body, timestamp);
+          pushRecentMessage('Me', body, msgTimestamp);
 
           fireHAEvent('whatsapp_message_create', {
             group_id: groupId,
             body: body,
-            timestamp: timestamp,
+            timestamp: msgTimestamp,
             message_id: messageId,
             from_me: true
           });
         } else {
           // Messages from others
           console.log(`[MSG] ${isGroup ? 'Group' : 'DM'} ${remoteJid}: ${body.substring(0, 80)}...`);
-          pushRecentMessage(sender, body, timestamp);
+          pushRecentMessage(sender, body, msgTimestamp);
 
           fireHAEvent('whatsapp_message', {
             group_id: remoteJid,
             sender: sender,
             body: body,
-            timestamp: timestamp,
+            timestamp: msgTimestamp,
             message_id: messageId,
             is_group: isGroup,
             from_me: false,
@@ -468,6 +479,19 @@ async function processCommandQueue() {
 
   processingCommand = true;
   console.log(`[CMD] Processing ${eventType} from [${appId}] (${requestId})... [${getTotalQueueLength()} remaining]`);
+
+  if (SAFE_MODE) {
+    console.log(`[SAFE] Skipping command in safe mode: ${eventType}`);
+    fireHAEvent('whatsapp_response', {
+      request_id: requestId,
+      command: eventType.replace('whatsapp_command_', ''),
+      success: false,
+      error: 'Safe mode is enabled — commands are disabled'
+    });
+    processingCommand = false;
+    setTimeout(processCommandQueue, COMMAND_DELAY_MS);
+    return;
+  }
 
   try {
     switch (eventType) {
@@ -749,6 +773,7 @@ async function main() {
   console.log(`[CONFIG] CONNECTED_NUMBER: ${CONNECTED_NUMBER || '(auto-detect)'}`);
   console.log(`[CONFIG] RESTART_HOURS: ${RESTART_HOURS || 'disabled'}`);
   console.log(`[CONFIG] TEST_MESSAGE: ${TEST_MESSAGE}`);
+  console.log(`[CONFIG] SAFE_MODE: ${SAFE_MODE}`);
   console.log(`[CONFIG] Node.js: ${process.version}`);
   console.log(`[CONFIG] Platform: ${process.platform} ${process.arch}`);
   console.log('');

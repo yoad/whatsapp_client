@@ -17,6 +17,8 @@ host_network: true
 options:
   TEST_MESSAGE: true
   RESTART_HOURS: 0
+  SAFE_MODE: false
 schema:
   TEST_MESSAGE: bool
   RESTART_HOURS: int
+  SAFE_MODE: bool
