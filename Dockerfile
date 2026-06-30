@@ -1,5 +1,5 @@
 # /addons/whatsapp_client/Dockerfile
-FROM node:18-slim
+FROM node:20-slim
 
 # Install Chromium and its dependencies (required by whatsapp-web.js / Puppeteer)
 RUN apt-get update && apt-get install -y --no-install-recommends \

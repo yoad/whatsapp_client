@@ -23,16 +23,27 @@ console.error = (...args) => _origErr(`[${_ts()}]`, ...args);
 // ────────────────────────────────────────────────────────────
 function isFatalLibraryError(err) {
   const msg = (err && err.message) ? err.message : String(err);
+  return msg.includes('target closed') ||
+         msg.includes('session closed') ||
+         msg.includes('detached frame');
+}
+
+function isTransientError(err) {
+  const msg = (err && err.message) ? err.message : String(err);
   return msg.includes('Execution context was destroyed') ||
-         msg.includes('detached frame') ||
-         msg.includes('target closed') ||
-         msg.includes('session closed');
+         msg.includes('timed out') ||
+         msg.includes('navigat');
 }
 
 process.on('unhandledRejection', (reason) => {
+  const msg = (reason && reason.message) ? reason.message : String(reason);
+  if (isTransientError(reason)) {
+    console.log('[WARN] Transient error (suppressed):', msg);
+    return;
+  }
   if (isFatalLibraryError(reason)) {
     if (clientReady) {
-      console.log('[WARN] Navigation error (non-fatal, client is connected):', reason.message || reason);
+      console.log('[WARN] Library error (non-fatal, client is connected):', msg);
       return;
     }
     console.error('[FATAL] Library crash during init — exiting for supervisor restart.');
@@ -43,9 +54,13 @@ process.on('unhandledRejection', (reason) => {
 });
 
 process.on('uncaughtException', (err) => {
+  if (isTransientError(err)) {
+    console.log('[WARN] Transient error (suppressed):', err.message);
+    return;
+  }
   if (isFatalLibraryError(err)) {
     if (clientReady) {
-      console.log('[WARN] Navigation error (non-fatal, client is connected):', err.message);
+      console.log('[WARN] Library error (non-fatal, client is connected):', err.message);
       return;
     }
     console.error('[FATAL] Library crash during init — exiting for supervisor restart.');
@@ -61,6 +76,7 @@ process.on('uncaughtException', (err) => {
 const SUPERVISOR_TOKEN = process.env.SUPERVISOR_TOKEN;
 const INGRESS_PORT = 3001;
 const COMMAND_DELAY_MS = 5000; // 5s between commands for stability
+const COMMAND_TIMEOUT_MS = 60000; // 60s max per command operation
 const HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
 const WS_RECONNECT_DELAY_MS = 5000;
 const MIGRATION_FLAG = '/data/.migrated_v134';
@@ -103,14 +119,25 @@ function pushRecentMessage(sender, body, timestamp) {
 // ────────────────────────────────────────────────────────────
 function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-async function retry(fn, label, maxRetries = 3, delayMs = 15000) {
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+async function retry(fn, label, maxRetries = 3, baseDelayMs = 10000) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await fn();
+      return await withTimeout(fn(), COMMAND_TIMEOUT_MS, label);
     } catch (err) {
       console.error(`[${label}] Attempt ${attempt}/${maxRetries} failed: ${err.message}`);
       if (attempt === maxRetries) throw err;
-      await delay(delayMs);
+      const backoff = baseDelayMs * attempt; // exponential-ish backoff
+      await delay(backoff);
     }
   }
 }
@@ -144,7 +171,7 @@ const client = new Client({
   authStrategy: new LocalAuth({ dataPath: '/data' }),
   puppeteer: {
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
-    protocolTimeout: 300000,
+    protocolTimeout: 180000,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -153,6 +180,17 @@ const client = new Client({
       '--no-first-run',
       '--no-zygote',
       '--disable-extensions',
+      // Prevent Chromium from throttling/suspending when "backgrounded"
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-ipc-flooding-protection',
+      // Reduce unnecessary work
+      '--disable-component-update',
+      '--disable-domain-reliability',
+      '--disable-features=TranslateUI',
+      // Cap JS heap to prevent OOM on ARM devices
+      '--js-flags=--max-old-space-size=256',
     ],
   }
 });
@@ -387,7 +425,11 @@ async function processCommandQueue() {
         if (!group_id) throw new Error('group_id required');
 
         const chat = await retry(() => client.getChatById(group_id), `fetch-${group_id}`);
-        const messages = await chat.fetchMessages({ limit: Math.min(limit, 200) });
+        const messages = await withTimeout(
+          chat.fetchMessages({ limit: Math.min(limit, 200) }),
+          COMMAND_TIMEOUT_MS,
+          `fetchMessages-${group_id}`
+        );
 
         const msgData = messages.map(m => ({
           body: m.body || '',
@@ -460,8 +502,10 @@ async function processCommandQueue() {
     });
 
     if (isFatalLibraryError(err)) {
-      console.error('[CMD] Detached frame error — scheduling restart.');
+      console.error('[CMD] Fatal library error — scheduling restart.');
       setTimeout(() => process.exit(1), 3000);
+    } else if (isTransientError(err)) {
+      console.log('[CMD] Transient error — skipping command, continuing queue.');
     }
   } finally {
     processingCommand = false;
@@ -474,6 +518,7 @@ async function processCommandQueue() {
 // HA WEBSOCKET — subscribe to command events
 // ────────────────────────────────────────────────────────────
 let wsMessageId = 1;
+let wsPingInterval = null;
 let haWs = null;
 
 function connectHAWebSocket() {
@@ -485,7 +530,14 @@ function connectHAWebSocket() {
   console.log('[WS] Connecting to HA WebSocket...');
   haWs = new WebSocket('ws://supervisor/core/websocket');
 
-  haWs.on('open', () => console.log('[WS] WebSocket connected'));
+  haWs.on('open', () => {
+    console.log('[WS] WebSocket connected');
+    // Keep-alive: send WS pings every 30s to prevent HA from dropping us
+    if (wsPingInterval) clearInterval(wsPingInterval);
+    wsPingInterval = setInterval(() => {
+      try { if (haWs && haWs.readyState === WebSocket.OPEN) haWs.ping(); } catch (_) {}
+    }, 30000);
+  });
 
   haWs.on('message', (data) => {
     try {
@@ -532,6 +584,7 @@ function connectHAWebSocket() {
 
   haWs.on('close', () => {
     console.log('[WS] Disconnected — reconnecting in 5s...');
+    if (wsPingInterval) { clearInterval(wsPingInterval); wsPingInterval = null; }
     setTimeout(connectHAWebSocket, WS_RECONNECT_DELAY_MS);
   });
 
@@ -616,7 +669,7 @@ async function main() {
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   WhatsApp Client for HA                  ║');
-  console.log('║   v1.34 • Event-driven • Round-robin      ║');
+  console.log('║   v1.2.0 • Event-driven • Round-robin     ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 
