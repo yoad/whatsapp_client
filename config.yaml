@@ -1,6 +1,6 @@
 # /addons/whatsapp_client/config.yaml
 name: "WhatsApp Client"
-version: "2.0.4"
+version: "2.0.5"
 slug: "whatsapp_client"
 description: "WhatsApp client for HA — Baileys engine (no Chromium, lightweight)"
 arch:

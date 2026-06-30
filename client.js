@@ -1,6 +1,6 @@
 // /addons/whatsapp_client/client.js
 // WhatsApp Client — event-driven bridge for HA addons
-// v2.0.4 — Baileys engine (no Chromium/Puppeteer)
+// v2.0.5 — Baileys engine (no Chromium/Puppeteer)
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -276,8 +276,15 @@ async function startBaileys() {
           console.log(`[RESTART] Status: ${connectionStatus}`);
           console.log(`[RESTART] Heartbeats sent: ${heartbeatCount}`);
           console.log(`[RESTART] Command queue depth: ${getTotalQueueLength()}`);
-          console.log('[RESTART] Exiting now — supervisor will restart...');
-          process.exit(0);
+          console.log('[RESTART] Closing WhatsApp connection cleanly...');
+          clientReady = false;
+          if (sock) {
+            try { sock.end(); } catch (_) {}
+          }
+          setTimeout(() => {
+            console.log('[RESTART] Exiting now — supervisor will restart...');
+            process.exit(0);
+          }, 2000);
         }, restartMs);
       }
     }
@@ -832,7 +839,7 @@ async function main() {
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   WhatsApp Client for HA                  ║');
-  console.log('║   v2.0.4 • Baileys • No Chromium          ║');
+  console.log('║   v2.0.5 • Baileys • No Chromium          ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 
@@ -853,3 +860,19 @@ async function main() {
 }
 
 main();
+
+// Clean disconnect on exit signals
+function handleExitSignal(signal) {
+  console.log(`[EXIT] Received ${signal} — closing connection cleanly...`);
+  clientReady = false;
+  if (sock) {
+    try { sock.end(); } catch (_) {}
+  }
+  setTimeout(() => {
+    console.log('[EXIT] Exiting now.');
+    process.exit(0);
+  }, 2000);
+}
+
+process.on('SIGTERM', () => handleExitSignal('SIGTERM'));
+process.on('SIGINT', () => handleExitSignal('SIGINT'));
