@@ -1,6 +1,6 @@
 // /addons/whatsapp_client/client.js
 // WhatsApp Client — event-driven bridge for HA addons
-// v2.0.0 — Baileys engine (no Chromium/Puppeteer)
+// v2.0.2 — Baileys engine (no Chromium/Puppeteer)
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -800,7 +800,7 @@ async function main() {
   console.log('');
   console.log('╔══════════════════════════════════════════╗');
   console.log('║   WhatsApp Client for HA                  ║');
-  console.log('║   v2.0.0 • Baileys • No Chromium          ║');
+  console.log('║   v2.0.2 • Baileys • No Chromium          ║');
   console.log('╚══════════════════════════════════════════╝');
   console.log('');
 
