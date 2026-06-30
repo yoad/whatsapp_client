@@ -32,7 +32,9 @@ function isTransientError(err) {
   const msg = (err && err.message) ? err.message : String(err);
   return msg.includes('Execution context was destroyed') ||
          msg.includes('timed out') ||
-         msg.includes('navigat');
+         msg.includes('navigat') ||
+         msg.includes('auth timeout') ||
+         msg.includes('Cannot read properties of undefined');
 }
 
 process.on('unhandledRejection', (reason) => {
@@ -131,12 +133,14 @@ function withTimeout(promise, ms, label) {
 
 async function retry(fn, label, maxRetries = 3, baseDelayMs = 10000) {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (!clientReady) throw new Error('WhatsApp not connected (client reloading)');
     try {
       return await withTimeout(fn(), COMMAND_TIMEOUT_MS, label);
     } catch (err) {
       console.error(`[${label}] Attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+      if (!clientReady) throw new Error('WhatsApp disconnected during operation');
       if (attempt === maxRetries) throw err;
-      const backoff = baseDelayMs * attempt; // exponential-ish backoff
+      const backoff = baseDelayMs * attempt;
       await delay(backoff);
     }
   }
@@ -229,6 +233,12 @@ client.on('auth_failure', (msg) => {
 
 client.on('loading_screen', (percent, message) => {
   console.log(`[Loading] ${percent}% — ${message}`);
+  // WhatsApp is reloading — pause command queue until 'ready' fires again
+  if (clientReady) {
+    console.log('[RELOAD] WhatsApp Web is reloading — pausing command queue');
+    clientReady = false;
+    connectionStatus = 'reloading';
+  }
 });
 
 // --- Ready ---
@@ -379,6 +389,13 @@ async function handleCommand(eventType, eventData) {
 async function processCommandQueue() {
   if (processingCommand) return;
   if (getTotalQueueLength() === 0) return;
+
+  // Wait for client to be ready before processing commands
+  if (!clientReady) {
+    console.log(`[CMD] Client not ready — deferring ${getTotalQueueLength()} queued commands`);
+    setTimeout(processCommandQueue, 10000); // retry in 10s
+    return;
+  }
 
   // Clean up empty queues from the round-robin order
   roundRobinOrder = roundRobinOrder.filter(id => appQueues.has(id) && appQueues.get(id).length > 0);
