@@ -78,6 +78,9 @@ let recentMessages = [];
 let sock = null;
 let connectedNumber = null;
 let connectedAt = 0; // timestamp (seconds) when we connected — ignore older messages
+let isFirstConnect = true; // only set connectedAt on first connection, not reconnects
+let restartTimer = null; // track scheduled restart to avoid stacking on reconnect
+let reconnectAttempts = 0; // exponential backoff counter for reconnects
 
 function pushRecentMessage(sender, body, timestamp) {
   recentMessages.push({
@@ -237,8 +240,15 @@ async function startBaileys() {
         connectedNumber = 'unknown';
       }
 
-      // Track connection time — ignore messages older than this during initial sync
-      connectedAt = Math.floor(Date.now() / 1000);
+      // Reset reconnect backoff on successful connection
+      reconnectAttempts = 0;
+
+      // Track connection time — only on first connect to avoid dropping
+      // messages that arrived during a brief disconnect gap on reconnects
+      if (isFirstConnect) {
+        connectedAt = Math.floor(Date.now() / 1000);
+        isFirstConnect = false;
+      }
 
       console.log('');
       console.log('╔══════════════════════════════════════════╗');
@@ -263,11 +273,12 @@ async function startBaileys() {
         }
       }
 
-      // Schedule restart if configured
+      // Schedule restart if configured (clear previous timer to avoid stacking on reconnect)
       if (RESTART_HOURS > 0) {
+        if (restartTimer) clearTimeout(restartTimer);
         const restartMs = RESTART_HOURS * 60 * 60 * 1000;
         console.log(`[RESTART] Scheduled automatic restart in ${RESTART_HOURS} hour(s)`);
-        setTimeout(() => {
+        restartTimer = setTimeout(() => {
           console.log('');
           console.log('╔══════════════════════════════════════════╗');
           console.log('║   🔄 SCHEDULED RESTART                    ║');
@@ -304,8 +315,14 @@ async function startBaileys() {
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
       if (shouldReconnect) {
-        console.log('[RECONNECT] Reconnecting in 5s...');
-        await delay(5000);
+        // Clean up old socket to prevent stacking event listeners
+        if (sock) {
+          try { sock.ev.removeAllListeners(); } catch (_) {}
+        }
+        reconnectAttempts++;
+        const backoffMs = Math.min(5000 * Math.pow(2, reconnectAttempts - 1), 60000);
+        console.log(`[RECONNECT] Reconnecting in ${backoffMs / 1000}s (attempt ${reconnectAttempts})...`);
+        await delay(backoffMs);
         startBaileys();
       } else {
         console.error('[LOGOUT] Session was logged out — clearing auth and exiting.');
@@ -613,11 +630,11 @@ async function processCommandQueue() {
             });
             console.log(`[CMD] ✅ Reacted ${emoji} to ${message_id} (key reconstructed)`);
           }
+          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: true });
         } catch (reactErr) {
-          console.log(`[CMD] React failed (non-fatal): ${reactErr.message}`);
+          console.error(`[CMD] ❌ React failed: ${reactErr.message}`);
+          fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: false, error: reactErr.message });
         }
-
-        fireHAEvent('whatsapp_response', { request_id: requestId, command: 'react', success: true });
         break;
       }
 
